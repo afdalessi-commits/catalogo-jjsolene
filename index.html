@@ -10,7 +10,11 @@
 *{box-sizing:border-box;}
 body{margin:0;font-family:"Poppins",sans-serif;background:#f7efe2;color:#2b1a1f;}
 h1,h2,h3{font-family:"Playfair Display",serif;margin:0;}
-.hero{background:linear-gradient(135deg,#6b1f33,#4a1523);color:#fff;padding:44px 24px 34px;text-align:center;}
+.hero{position:relative;background:linear-gradient(135deg,#6b1f33,#4a1523);color:#fff;padding:44px 24px 34px;text-align:center;overflow:hidden;}
+.hero-bg{position:absolute;inset:0;background-size:cover;background-position:center;}
+.hero-overlay{position:absolute;inset:0;background:linear-gradient(180deg,rgba(43,20,32,0.55) 0%,rgba(43,20,32,0.8) 70%,rgba(43,20,32,0.92) 100%);}
+.hero-content{position:relative;}
+.hero-logo{width:76px;height:76px;border-radius:50%;object-fit:cover;border:2px solid #c9a15a;margin-bottom:12px;box-shadow:0 4px 14px rgba(0,0,0,0.35);}
 .hero h1{font-size:34px;}
 .hero p{margin-top:8px;font-size:14px;color:#e9d7c8;}
 .hero .badge{display:inline-block;margin-top:14px;background:#c9a15a;color:#3a2a10;font-weight:700;font-size:12.5px;padding:7px 16px;border-radius:999px;}
@@ -74,6 +78,12 @@ async function loadData(){
   CATALOG.settings = (s.data && s.data[0]) || {};
   CATALOG.categories = c.data || [];
   CATALOG.products = p.data || [];
+  if(CATALOG.settings.store_name){ document.title = CATALOG.settings.store_name; }
+  if(CATALOG.settings.logo_url){
+    var link = document.querySelector("link[rel~='icon']");
+    if(!link){ link = document.createElement("link"); link.rel = "icon"; document.head.appendChild(link); }
+    link.href = CATALOG.settings.logo_url;
+  }
   buildApp();
 }
 function availSizes(p){
@@ -84,7 +94,16 @@ function buildApp(){
   var app = document.getElementById("app");
   app.innerHTML = "";
   var hero = document.createElement("div"); hero.className="hero";
-  hero.innerHTML = "<h1>"+esc(data.settings.store_name||"Catálogo")+"</h1><p>"+esc(data.settings.tagline||"")+"</p><span class=\"badge\">"+esc(data.settings.delivery_text||"")+"</span>";
+  if(data.settings.banner_url){
+    var heroBg = document.createElement("div"); heroBg.className="hero-bg"; heroBg.style.backgroundImage = "url('"+data.settings.banner_url+"')";
+    hero.appendChild(heroBg);
+    var heroOverlay = document.createElement("div"); heroOverlay.className="hero-overlay";
+    hero.appendChild(heroOverlay);
+  }
+  var heroContent = document.createElement("div"); heroContent.className="hero-content";
+  var logoHtml = data.settings.logo_url ? "<img class=\"hero-logo\" src=\""+data.settings.logo_url+"\" alt=\"logo\">" : "";
+  heroContent.innerHTML = logoHtml+"<h1>"+esc(data.settings.store_name||"Catálogo")+"</h1><p>"+esc(data.settings.tagline||"")+"</p><span class=\"badge\">"+esc(data.settings.delivery_text||"")+"</span>";
+  hero.appendChild(heroContent);
   app.appendChild(hero);
   var navCats = document.createElement("div"); navCats.className="nav-cats";
   data.categories.forEach(function(c){
