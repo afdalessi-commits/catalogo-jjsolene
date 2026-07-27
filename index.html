@@ -53,6 +53,8 @@ h1,h2,h3{font-family:"Playfair Display",serif;margin:0;}
 .cart-foot input{width:100%;margin-bottom:8px;padding:8px 10px;border:1px solid #e8dcc8;border-radius:8px;font-family:Poppins,sans-serif;}
 .checkout-btn{width:100%;padding:12px;border:none;border-radius:9px;background:#25D366;color:#fff;font-weight:700;margin-top:6px;cursor:pointer;}
 .checkout-btn:disabled{opacity:0.5;}
+.checkout-btn.card{background:#6b1f33;}
+.checkout-note{font-size:11px;color:#8a7568;text-align:center;margin-top:6px;}
 .pix-box{background:#f7efe2;border-radius:8px;padding:10px;font-size:12px;margin-top:10px;}
 .footer{text-align:center;padding:26px 16px;color:#8a7568;font-size:12.5px;}
 .empty-cart{padding:30px 10px;text-align:center;color:#8a7568;font-size:13px;}
@@ -231,7 +233,11 @@ function renderCart(){
   if(sinalPercent < 100){
     footHtml += "<div class=\"line total\"><span>Sinal ("+sinalPercent+"%)</span><span>"+money(sinalValor)+"</span></div>";
   }
-  footHtml += "<button class=\"checkout-btn\" id=\"checkoutBtn\" onclick=\"checkout()\">Finalizar pedido</button>";
+  footHtml += "<button class=\"checkout-btn\" id=\"checkoutBtn\" onclick=\"checkout()\">Finalizar pedido (Pix / combinar)</button>";
+  if(CATALOG.settings.infinitepay_handle){
+    footHtml += "<button class=\"checkout-btn card\" id=\"checkoutCardBtn\" onclick=\"checkoutCard()\">Pagar com cartão</button>";
+    footHtml += "<div class=\"checkout-note\">Pix ou cartão em até 12x, via InfinitePay</div>";
+  }
   if(CATALOG.settings.pix_key){
     footHtml += "<div class=\"pix-box\"><strong>Pix:</strong> "+esc(CATALOG.settings.pix_key)+"<br>Titular: "+esc(CATALOG.settings.pix_titular||"")+"<br>"+esc(CATALOG.settings.payment_note||"")+"</div>";
   }
@@ -262,7 +268,66 @@ async function checkout(){
   if(wpp){ window.open("https://wa.me/"+wpp+"?text="+msg, "_blank"); }
   alert("Pedido registrado! Assim que a loja confirmar o pagamento, ele será processado.");
 }
-loadData();
+async function checkoutCard(){
+  if(cart.length===0) return;
+  var name = (document.getElementById("chk_name").value||"").trim();
+  var phone = (document.getElementById("chk_phone").value||"").trim();
+  if(!name || !phone){ alert("Preencha seu nome e telefone para continuar."); return; }
+  var handle = CATALOG.settings.infinitepay_handle;
+  if(!handle){ alert("Pagamento por cartão ainda não configurado pela loja."); return; }
+  var btn = document.getElementById("checkoutCardBtn");
+  btn.disabled = true; btn.textContent = "Preparando pagamento...";
+  var orderId = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())+"-"+Math.random().toString(36).slice(2));
+  var items = cart.map(function(it){ return { product_id: it.id, size: it.size, qty: it.qty, price: it.price }; });
+  var res = await sb.rpc("reserve_stock", { p_order_id: orderId, p_customer: name, p_phone: phone, p_items: items });
+  if(res.error){
+    alert("Não foi possível preparar o pedido: " + res.error.message + "\nAtualize a página e tente de novo.");
+    btn.disabled = false; btn.textContent = "Pagar com cartão";
+    return;
+  }
+  var ipItems = cart.map(function(it){ return { quantity: it.qty, price: Math.round(it.price*100), description: it.name + " (Tam " + it.size + ")" }; });
+  var redirectUrl = window.location.origin + window.location.pathname;
+  try{
+    var resp = await fetch("https://api.checkout.infinitepay.io/links", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ handle: handle, redirect_url: redirectUrl, order_nsu: orderId, items: ipItems,
+        customer: { name: name, phone_number: phone } })
+    });
+    var data = await resp.json();
+    if(!resp.ok || !data.url){ throw new Error(data.message || "Falha ao gerar link de pagamento"); }
+    window.location.href = data.url;
+  }catch(e){
+    alert("Não foi possível abrir o pagamento por cartão agora (" + e.message + "). Tente o botão de Pix / WhatsApp.");
+    btn.disabled = false; btn.textContent = "Pagar com cartão";
+  }
+}
+async function checkReturnFromInfinitePay(){
+  var params = new URLSearchParams(window.location.search);
+  var orderNsu = params.get("order_nsu");
+  var transactionNsu = params.get("transaction_nsu");
+  var slug = params.get("slug");
+  var receiptUrl = params.get("receipt_url");
+  if(!orderNsu || !transactionNsu) return;
+  var handle = CATALOG.settings.infinitepay_handle;
+  if(!handle) return;
+  try{
+    var resp = await fetch("https://api.checkout.infinitepay.io/payment_check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ handle: handle, order_nsu: orderNsu, transaction_nsu: transactionNsu, slug: slug })
+    });
+    var data = await resp.json();
+    if(data && data.paid){
+      await sb.rpc("attach_payment_receipt", { p_order_id: orderNsu, p_transaction_nsu: transactionNsu, p_receipt_url: receiptUrl || "", p_payment_method: "cartao_infinitepay" });
+      alert("Pagamento confirmado! Assim que a loja verificar, seu pedido será processado.");
+    } else {
+      alert("Recebemos seu retorno, mas ainda não conseguimos confirmar o pagamento. Se você já pagou, a loja vai conferir manualmente.");
+    }
+  }catch(e){ /* silencioso — a loja confere manualmente se algo falhar aqui */ }
+  window.history.replaceState({}, document.title, window.location.pathname);
+}
+loadData().then(checkReturnFromInfinitePay);
 </script>
 </body>
 </html>
