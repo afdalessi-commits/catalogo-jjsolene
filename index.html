@@ -60,6 +60,24 @@ h1,h2,h3{font-family:"Playfair Display",serif;margin:0;}
 .empty-cart{padding:30px 10px;text-align:center;color:#8a7568;font-size:13px;}
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:55;display:none;}
 .overlay.show{display:block;}
+.banner-strip{max-width:1080px;margin:16px auto 0;padding:0 16px;display:flex;gap:12px;overflow-x:auto;}
+.banner-strip img{height:120px;border-radius:12px;object-fit:cover;flex-shrink:0;cursor:pointer;}
+.gallery-thumbs{display:flex;gap:5px;padding:0 14px;margin-top:-4px;flex-wrap:wrap;}
+.gallery-thumbs img,.gallery-thumbs .vidthumb{width:32px;height:32px;object-fit:cover;border-radius:5px;cursor:pointer;border:1.5px solid transparent;}
+.gallery-thumbs img.active{border-color:#6b1f33;}
+.gallery-thumbs .vidthumb{background:#2b1420;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;}
+.waitlist-btn{margin-top:6px;border:1.5px solid #6b1f33;background:#fff;color:#6b1f33;border-radius:8px;padding:8px;font-weight:700;font-size:12px;cursor:pointer;}
+.coupon-row{display:flex;gap:6px;margin-bottom:8px;}
+.coupon-row input{flex:1;margin-bottom:0;}
+.coupon-row button{border:none;background:#2b1420;color:#fff;border-radius:8px;padding:0 12px;font-weight:700;font-size:12px;cursor:pointer;}
+.coupon-msg{font-size:11.5px;margin:-4px 0 8px;}
+.coupon-msg.ok{color:#1e7d32;}
+.coupon-msg.err{color:#b3261e;}
+.gift-line{background:#fdf3e0;border-radius:8px;padding:8px 10px;font-size:12px;color:#a9720c;font-weight:700;margin:6px 0;}
+.myorders-link{position:absolute;top:16px;right:16px;font-size:12px;color:#f0e3d3;text-decoration:underline;cursor:pointer;background:none;border:none;}
+.myorders-box{background:#fff;border-radius:10px;padding:14px;font-size:13px;}
+.myorders-box input{width:100%;padding:8px 10px;border:1px solid #e8dcc8;border-radius:8px;margin-bottom:8px;}
+.myorders-box .ordrow{border-bottom:1px solid #eee;padding:8px 0;font-size:12.5px;}
 </style>
 </head>
 <body>
@@ -69,17 +87,25 @@ h1,h2,h3{font-family:"Playfair Display",serif;margin:0;}
 var SB_URL = "https://pcvcpylcpuvprpkydbxf.supabase.co";
 var SB_ANON = "sb_publishable_CEbY6JfhPkmj-8ywKgD-nw_GriioZPT";
 var sb = window.supabase.createClient(SB_URL, SB_ANON);
-var CATALOG = { settings:null, categories:[], products:[] };
+var CATALOG = { settings:null, categories:[], products:[], media:[], banners:[], giftRules:[] };
 var cart = [];
+var appliedCoupon = null;
+var couponMessage = "";
 function money(n){ return "R$ " + (Number(n)||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function esc(s){ var d=document.createElement("div"); d.textContent = (s==null?"":s); return d.innerHTML; }
 async function loadData(){
   var s = await sb.from("settings").select("*").eq("id",1).limit(1);
   var c = await sb.from("categories").select("*").order("sort_order");
   var p = await sb.from("products").select("*, product_sizes(*)").eq("show_in_catalog", true).order("name");
+  var m = await sb.from("product_media").select("*").order("sort_order");
+  var b = await sb.from("banners").select("*").order("sort_order");
+  var g = await sb.from("gift_rules").select("*, products(id,name,sale_price,image_url,product_sizes(*))").order("min_total");
   CATALOG.settings = (s.data && s.data[0]) || {};
   CATALOG.categories = c.data || [];
   CATALOG.products = p.data || [];
+  CATALOG.media = m.data || [];
+  CATALOG.banners = b.data || [];
+  CATALOG.giftRules = g.data || [];
   if(CATALOG.settings.store_name){ document.title = CATALOG.settings.store_name; }
   if(CATALOG.settings.logo_url){
     var link = document.querySelector("link[rel~='icon']");
@@ -88,6 +114,7 @@ async function loadData(){
   }
   buildApp();
 }
+function mediaFor(productId){ return CATALOG.media.filter(function(mm){ return mm.product_id===productId; }); }
 function availSizes(p){
   return (p.product_sizes||[]).map(function(sz){ return { size: sz.size, avail: (Number(sz.stock)||0) - (Number(sz.reserved)||0) }; });
 }
@@ -106,7 +133,18 @@ function buildApp(){
   var logoHtml = data.settings.logo_url ? "<img class=\"hero-logo\" src=\""+data.settings.logo_url+"\" alt=\"logo\">" : "";
   heroContent.innerHTML = logoHtml+"<h1>"+esc(data.settings.store_name||"Catálogo")+"</h1><p>"+esc(data.settings.tagline||"")+"</p><span class=\"badge\">"+esc(data.settings.delivery_text||"")+"</span>";
   hero.appendChild(heroContent);
+  var myOrdersBtn = document.createElement("button"); myOrdersBtn.className="myorders-link"; myOrdersBtn.textContent="Meus pedidos"; myOrdersBtn.onclick=openMyOrders;
+  hero.appendChild(myOrdersBtn);
   app.appendChild(hero);
+  if(data.banners && data.banners.length){
+    var bstrip = document.createElement("div"); bstrip.className="banner-strip";
+    data.banners.forEach(function(bn){
+      var bimg = document.createElement("img"); bimg.src = bn.image_url; bimg.alt="banner";
+      if(bn.link_url){ bimg.onclick = function(){ window.open(bn.link_url, "_blank"); }; }
+      bstrip.appendChild(bimg);
+    });
+    app.appendChild(bstrip);
+  }
   var navCats = document.createElement("div"); navCats.className="nav-cats";
   data.categories.forEach(function(c){
     var has = data.products.some(function(p){return p.category_id===c.id;});
@@ -135,15 +173,42 @@ function buildApp(){
 function buildCard(p){
   var card = document.createElement("div"); card.className="pcard";
   var img = document.createElement("div"); img.className="pimg";
-  if(p.image_url){ var im = document.createElement("img"); im.src = p.image_url; im.alt = p.name; img.appendChild(im); }
+  var mainImgEl = null;
+  if(p.image_url){ mainImgEl = document.createElement("img"); mainImgEl.src = p.image_url; mainImgEl.alt = p.name; img.appendChild(mainImgEl); }
   else { img.textContent = p.name; }
   card.appendChild(img);
+  var media = mediaFor(p.id);
+  if(media.length){
+    var gal = document.createElement("div"); gal.className="gallery-thumbs";
+    if(p.image_url){
+      var mainThumb = document.createElement("img"); mainThumb.src = p.image_url; mainThumb.className="active";
+      mainThumb.onclick = function(){ if(mainImgEl) mainImgEl.src = p.image_url; Array.prototype.forEach.call(gal.children, function(t){t.classList.remove("active");}); mainThumb.classList.add("active"); };
+      gal.appendChild(mainThumb);
+    }
+    media.forEach(function(mm){
+      if(mm.media_type==="video"){
+        var vt = document.createElement("div"); vt.className="vidthumb"; vt.textContent="▶";
+        vt.onclick = function(){ window.open(mm.url, "_blank"); };
+        gal.appendChild(vt);
+      } else {
+        var th = document.createElement("img"); th.src = mm.url;
+        th.onclick = function(){ if(mainImgEl){ mainImgEl.src = mm.url; } else { mainImgEl=document.createElement("img"); mainImgEl.src=mm.url; img.innerHTML=""; img.appendChild(mainImgEl); } Array.prototype.forEach.call(gal.children, function(t){t.classList.remove("active");}); th.classList.add("active"); };
+        gal.appendChild(th);
+      }
+    });
+    card.appendChild(gal);
+  }
   var body = document.createElement("div"); body.className="pbody";
   var name = document.createElement("div"); name.className="pname"; name.textContent = p.name;
   body.appendChild(name);
   if(p.description){ var d=document.createElement("div"); d.className="pdesc"; d.textContent=p.description; body.appendChild(d); }
   var price = document.createElement("div"); price.className="pprice"; price.textContent = money(p.sale_price);
   body.appendChild(price);
+  if(p.discount_type && p.discount_type!=="none" && p.discount_value>0){
+    var discTxt = p.discount_type==="percent" ? (p.discount_value+"% de desconto") : (money(p.discount_value)+" de desconto por peça");
+    var dd = document.createElement("div"); dd.className="promo"; dd.textContent = "A partir de "+(p.discount_min_qty||1)+" un: "+discTxt;
+    body.appendChild(dd);
+  }
   if(p.promo_text){ var pr=document.createElement("div"); pr.className="promo"; pr.textContent=p.promo_text; body.appendChild(pr); }
   var sizes = availSizes(p).filter(function(s){ return s.avail > 0; });
   var selectedSize = null;
@@ -152,6 +217,9 @@ function buildCard(p){
     var soldout = document.createElement("div"); soldout.className="soldout"; soldout.textContent="Esgotado no momento";
     body.appendChild(soldout);
     addBtn.disabled = true;
+    var wlBtn = document.createElement("button"); wlBtn.type="button"; wlBtn.className="waitlist-btn"; wlBtn.textContent="🔔 Avise-me quando chegar";
+    wlBtn.onclick = function(){ openWaitlistForm(p); };
+    body.appendChild(wlBtn);
   } else {
     var sizesWrap = document.createElement("div"); sizesWrap.className="psizes";
     sizes.forEach(function(sz){
@@ -175,9 +243,29 @@ function buildCard(p){
   card.appendChild(body);
   return card;
 }
+function openWaitlistForm(p){
+  var m = genericModal("<div class=\"myorders-box\"><strong>Avise-me quando chegar</strong><p style=\"color:#8a7568;\">"+esc(p.name)+"</p><input id=\"wl_name\" placeholder=\"Seu nome\"><input id=\"wl_phone\" placeholder=\"Seu telefone (com DDD)\"><button class=\"checkout-btn\" id=\"wl_btn\" style=\"margin-top:0;\">Quero ser avisado(a)</button></div>");
+  document.getElementById("wl_btn").onclick = async function(){
+    var name = (document.getElementById("wl_name").value||"").trim();
+    var phone = (document.getElementById("wl_phone").value||"").trim();
+    if(!name || !phone){ alert("Preencha nome e telefone."); return; }
+    await sb.from("waitlist").insert([{ product_id: p.id, customer_name: name, phone: phone }]);
+    m.close();
+    alert("Prontinho! Vamos te avisar assim que chegar.");
+  };
+}
+function lineUnitPrice(it){
+  if(it.isGift) return 0;
+  if(it.discountType==="percent" && it.qty>=(it.discountMinQty||1)){ return it.price*(1-(it.discountValue||0)/100); }
+  if(it.discountType==="fixed" && it.qty>=(it.discountMinQty||1)){ return Math.max(0, it.price-(it.discountValue||0)); }
+  return it.price;
+}
 function addToCart(p, size){
-  var line = cart.find(function(it){ return it.id===p.id && it.size===size; });
-  if(line){ line.qty += 1; } else { cart.push({id:p.id, name:p.name, price:p.sale_price, size:size, qty:1}); }
+  var line = cart.find(function(it){ return it.id===p.id && it.size===size && !it.isGift; });
+  if(line){ line.qty += 1; } else {
+    cart.push({id:p.id, name:p.name, price:p.sale_price, size:size, qty:1,
+      discountType:p.discount_type||"none", discountValue:p.discount_value||0, discountMinQty:p.discount_min_qty||1});
+  }
   renderCart();
   openCart();
 }
@@ -200,7 +288,76 @@ function buildCartUI(){
 }
 function openCart(){ document.getElementById("cartPanel").classList.add("open"); document.getElementById("cartOverlay").classList.add("show"); }
 function closeCart(){ document.getElementById("cartPanel").classList.remove("open"); document.getElementById("cartOverlay").classList.remove("show"); }
+function genericModal(innerHtml){
+  var ov = document.createElement("div"); ov.className="overlay show"; ov.style.zIndex="80";
+  ov.onclick = function(e){ if(e.target===ov){ document.body.removeChild(ov); } };
+  var box = document.createElement("div");
+  box.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:12px;padding:18px;max-width:360px;width:90%;z-index:81;max-height:80vh;overflow:auto;";
+  box.innerHTML = innerHtml;
+  document.body.appendChild(ov);
+  document.body.appendChild(box);
+  return { overlay: ov, box: box, close: function(){ if(ov.parentNode) document.body.removeChild(ov); if(box.parentNode) document.body.removeChild(box); } };
+}
+function openMyOrders(){
+  var m = genericModal("<div class=\"myorders-box\"><strong>Meus pedidos</strong><p style=\"color:#8a7568;\">Digite o telefone usado na compra para ver seu histórico e saldo de cashback.</p><input id=\"mo_phone\" placeholder=\"Seu telefone (com DDD)\"><button class=\"checkout-btn\" id=\"mo_btn\" style=\"margin-top:0;\">Consultar</button><div id=\"mo_result\"></div></div>");
+  document.getElementById("mo_btn").onclick = async function(){
+    var phone = (document.getElementById("mo_phone").value||"").trim();
+    if(!phone) return;
+    var res = await sb.rpc("get_my_orders", { p_phone: phone });
+    var box = document.getElementById("mo_result");
+    if(res.error || !res.data || !res.data.found){
+      box.innerHTML = "<p style=\"color:#b3261e;font-size:12.5px;\">Nenhum cadastro encontrado com esse telefone.</p>";
+      return;
+    }
+    var d = res.data;
+    var html = "<p><strong>"+esc(d.name)+"</strong><br>Saldo de cashback: <strong>"+money(d.cashback_balance)+"</strong></p>";
+    if(!d.orders || d.orders.length===0){ html += "<p style=\"color:#8a7568;font-size:12.5px;\">Nenhuma compra confirmada ainda.</p>"; }
+    else {
+      d.orders.forEach(function(o){
+        html += "<div class=\"ordrow\"><strong>"+new Date(o.date).toLocaleDateString("pt-BR")+"</strong> — "+money(o.total)+"<br>";
+        (o.items||[]).forEach(function(it){ html += esc(it.product_name)+" (Tam "+esc(it.size)+") x"+it.qty+"<br>"; });
+        html += "</div>";
+      });
+    }
+    box.innerHTML = html;
+  };
+}
+function cartSubtotal(){ return cart.filter(function(it){return !it.isGift;}).reduce(function(s,it){return s + it.qty*lineUnitPrice(it);},0); }
+function bestGiftRule(subtotal){
+  var eligible = (CATALOG.giftRules||[]).filter(function(r){ return r.active!==false && subtotal >= r.min_total && r.products; });
+  if(!eligible.length) return null;
+  eligible.sort(function(a,b){ return b.min_total - a.min_total; });
+  return eligible[0];
+}
+function syncGiftLine(){
+  var subtotal = cartSubtotal();
+  cart = cart.filter(function(it){ return !it.isGift; });
+  if(subtotal<=0) return;
+  var rule = bestGiftRule(subtotal);
+  if(!rule) return;
+  var gp = rule.products;
+  var sizes = (gp.product_sizes||[]).map(function(sz){ return { size: sz.size, avail: (Number(sz.stock)||0)-(Number(sz.reserved)||0) }; }).filter(function(s){return s.avail>0;});
+  if(!sizes.length) return;
+  cart.push({ id: gp.id, name: gp.name+" (brinde 🎁)", price: 0, size: sizes[0].size, qty: 1, isGift:true, giftProductId: gp.id });
+}
+async function applyCoupon(){
+  var input = document.getElementById("coupon_input");
+  var code = (input.value||"").trim();
+  var msgEl = document.getElementById("coupon_msg");
+  if(!code){ appliedCoupon = null; renderCart(); return; }
+  var subtotal = cartSubtotal();
+  var res = await sb.rpc("validate_coupon", { p_code: code, p_cart_total: subtotal });
+  if(res.error || !res.data || !res.data.valid){
+    appliedCoupon = null;
+    couponMessage = (res.data && res.data.message) || "Cupom inválido.";
+  } else {
+    appliedCoupon = { code: code, discount_amount: res.data.discount_amount };
+    couponMessage = "Cupom aplicado! Desconto de "+money(res.data.discount_amount)+".";
+  }
+  renderCart();
+}
 function renderCart(){
+  syncGiftLine();
   var itemsEl = document.getElementById("cartItems");
   var footEl = document.getElementById("cartFoot");
   var fab = document.getElementById("cartFab");
@@ -209,13 +366,21 @@ function renderCart(){
   if(cart.length===0){
     itemsEl.innerHTML = "<div class=\"empty-cart\">Seu carrinho está vazio.</div>";
     footEl.innerHTML = "";
+    appliedCoupon = null;
     return;
   }
   itemsEl.innerHTML = "";
   cart.forEach(function(it, idx){
+    if(it.isGift){
+      var grow = document.createElement("div"); grow.className="gift-line"; grow.textContent = "🎁 Brinde: "+it.name.replace(" (brinde 🎁)","")+" (Tam "+it.size+")";
+      itemsEl.appendChild(grow);
+      return;
+    }
     var row = document.createElement("div"); row.className="cart-item";
     var left = document.createElement("div");
-    left.innerHTML = "<strong>"+esc(it.name)+"</strong><br><span style=\"color:#8a7568;\">Tam "+esc(it.size)+" · "+money(it.price)+"</span>";
+    var unitP = lineUnitPrice(it);
+    var priceTxt = unitP < it.price ? ("<s style=\"color:#b3a494;\">"+money(it.price)+"</s> "+money(unitP)) : money(unitP);
+    left.innerHTML = "<strong>"+esc(it.name)+"</strong><br><span style=\"color:#8a7568;\">Tam "+esc(it.size)+" · "+priceTxt+"</span>";
     var right = document.createElement("div"); right.className="qty-ctrl";
     var minus = document.createElement("button"); minus.textContent="-"; minus.onclick=function(){changeQty(idx,-1);};
     var qtySpan = document.createElement("span"); qtySpan.textContent = it.qty;
@@ -224,12 +389,18 @@ function renderCart(){
     row.appendChild(left); row.appendChild(right);
     itemsEl.appendChild(row);
   });
-  var total = cart.reduce(function(s,it){return s + it.qty*it.price;},0);
+  var subtotal = cartSubtotal();
+  var discount = appliedCoupon ? appliedCoupon.discount_amount : 0;
+  var total = Math.max(0, subtotal - discount);
   var sinalPercent = CATALOG.settings.sinal_percent || 100;
   var sinalValor = total * (sinalPercent/100);
-  var footHtml = "<input id=\"chk_name\" placeholder=\"Seu nome\">";
+  var footHtml = "<div class=\"coupon-row\"><input id=\"coupon_input\" placeholder=\"Cupom de desconto\" value=\""+esc(appliedCoupon?appliedCoupon.code:"")+"\"><button type=\"button\" onclick=\"applyCoupon()\">Aplicar</button></div>";
+  if(couponMessage){ footHtml += "<div class=\"coupon-msg "+(appliedCoupon?"ok":"err")+"\">"+esc(couponMessage)+"</div>"; }
+  footHtml += "<input id=\"chk_name\" placeholder=\"Seu nome\">";
   footHtml += "<input id=\"chk_phone\" placeholder=\"Seu telefone (com DDD)\">";
-  footHtml += "<div class=\"line\"><span>Total</span><strong>"+money(total)+"</strong></div>";
+  footHtml += "<div class=\"line\"><span>Subtotal</span><span>"+money(subtotal)+"</span></div>";
+  if(discount>0){ footHtml += "<div class=\"line\"><span>Desconto</span><span>-"+money(discount)+"</span></div>"; }
+  footHtml += "<div class=\"line total\"><span>Total</span><strong>"+money(total)+"</strong></div>";
   if(sinalPercent < 100){
     footHtml += "<div class=\"line total\"><span>Sinal ("+sinalPercent+"%)</span><span>"+money(sinalValor)+"</span></div>";
   }
@@ -251,18 +422,22 @@ async function checkout(){
   var btn = document.getElementById("checkoutBtn");
   btn.disabled = true; btn.textContent = "Enviando pedido...";
   var orderId = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())+"-"+Math.random().toString(36).slice(2));
-  var items = cart.map(function(it){ return { product_id: it.id, size: it.size, qty: it.qty, price: it.price }; });
-  var res = await sb.rpc("reserve_stock", { p_order_id: orderId, p_customer: name, p_phone: phone, p_items: items });
+  var items = cart.map(function(it){ return { product_id: it.id, size: it.size, qty: it.qty, price: lineUnitPrice(it) }; });
+  var giftItem = cart.find(function(it){return it.isGift;});
+  var res = await sb.rpc("reserve_stock", { p_order_id: orderId, p_customer: name, p_phone: phone, p_items: items,
+    p_coupon_code: appliedCoupon ? appliedCoupon.code : null, p_gift_product_id: giftItem ? giftItem.giftProductId : null });
   if(res.error){
     alert("Não foi possível concluir o pedido: " + res.error.message + "\nAlguém pode ter levado a última peça — atualize a página e tente de novo.");
     btn.disabled = false; btn.textContent = "Finalizar pedido";
     return;
   }
-  var lines = cart.map(function(it){ return "- "+it.name+" (Tam "+it.size+") x"+it.qty+" — "+money(it.price*it.qty); });
-  var total = cart.reduce(function(s,it){return s + it.qty*it.price;},0);
+  try{ await sb.rpc("upsert_customer", { p_name: name, p_phone: phone, p_email: null, p_birth_day: null, p_birth_month: null, p_cpf: null }); }catch(e){}
+  var lines = cart.map(function(it){ return "- "+it.name+" (Tam "+it.size+") x"+it.qty+" — "+money(lineUnitPrice(it)*it.qty); });
+  var total = (res.data && res.data.total!=null) ? res.data.total : cartSubtotal();
   var msg = "Olá! Fiz um pedido no catálogo (" + name + "):%0A%0A" + encodeURIComponent(lines.join("\n")) + "%0A%0ATotal: " + encodeURIComponent(money(total));
   var wpp = (CATALOG.settings.whatsapp||"").replace(/\D/g,"");
   cart = [];
+  appliedCoupon = null; couponMessage = "";
   renderCart();
   closeCart();
   if(wpp){ window.open("https://wa.me/"+wpp+"?text="+msg, "_blank"); }
@@ -278,14 +453,25 @@ async function checkoutCard(){
   var btn = document.getElementById("checkoutCardBtn");
   btn.disabled = true; btn.textContent = "Preparando pagamento...";
   var orderId = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())+"-"+Math.random().toString(36).slice(2));
-  var items = cart.map(function(it){ return { product_id: it.id, size: it.size, qty: it.qty, price: it.price }; });
-  var res = await sb.rpc("reserve_stock", { p_order_id: orderId, p_customer: name, p_phone: phone, p_items: items });
+  var items = cart.map(function(it){ return { product_id: it.id, size: it.size, qty: it.qty, price: lineUnitPrice(it) }; });
+  var giftItem = cart.find(function(it){return it.isGift;});
+  var res = await sb.rpc("reserve_stock", { p_order_id: orderId, p_customer: name, p_phone: phone, p_items: items,
+    p_coupon_code: appliedCoupon ? appliedCoupon.code : null, p_gift_product_id: giftItem ? giftItem.giftProductId : null });
   if(res.error){
     alert("Não foi possível preparar o pedido: " + res.error.message + "\nAtualize a página e tente de novo.");
     btn.disabled = false; btn.textContent = "Pagar com cartão";
     return;
   }
-  var ipItems = cart.map(function(it){ return { quantity: it.qty, price: Math.round(it.price*100), description: it.name + " (Tam " + it.size + ")" }; });
+  try{ await sb.rpc("upsert_customer", { p_name: name, p_phone: phone, p_email: null, p_birth_day: null, p_birth_month: null, p_cpf: null }); }catch(e){}
+  var chargeTotal = (res.data && res.data.total!=null) ? res.data.total : cartSubtotal();
+  var itemCount = cart.filter(function(it){return !it.isGift;}).reduce(function(s,it){return s+it.qty;},0);
+  var hasDiscount = (res.data && res.data.discount_amount > 0) || cart.some(function(it){ return !it.isGift && lineUnitPrice(it) < it.price; });
+  var ipItems;
+  if(hasDiscount){
+    ipItems = [{ quantity: 1, price: Math.round(chargeTotal*100), description: "Pedido "+name+" ("+itemCount+" peça(s))" }];
+  } else {
+    ipItems = cart.filter(function(it){return !it.isGift;}).map(function(it){ return { quantity: it.qty, price: Math.round(it.price*100), description: it.name + " (Tam " + it.size + ")" }; });
+  }
   var redirectUrl = window.location.origin + window.location.pathname;
   try{
     var resp = await fetch("https://api.checkout.infinitepay.io/links", {
