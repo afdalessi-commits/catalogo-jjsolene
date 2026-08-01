@@ -1710,8 +1710,8 @@ async function renderCatalogoTab(){
   el.innerHTML = html;
 }
 async function generateCatalog(){
-  const url = localStorage.getItem(SB_URL_KEY);
-  const key = localStorage.getItem(SB_ANON_KEY);
+  const url = localStorage.getItem(SB_URL_KEY) || DEFAULT_SB_URL;
+  const key = localStorage.getItem(SB_ANON_KEY) || DEFAULT_SB_ANON;
   const html = buildCatalogHTML(url, key);
   const blob = new Blob([html], {type:'text/html'});
   const a = document.createElement('a');
