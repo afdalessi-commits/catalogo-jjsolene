@@ -1726,7 +1726,7 @@ async function generateCatalog(){
 }
 
 function buildCatalogHTML(sbUrl, sbAnon){
-  return '<!DOCTYPE html>\n<html lang="pt-BR">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>Catálogo</title>\n' +
+  return '<!DOCTYPE html>\n<html lang="pt-BR">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>JJ Solene - Catálogo</title>\n' +
   '<link rel="preconnect" href="https://fonts.googleapis.com">\n' +
   '<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,600;1,700&family=Dancing+Script:wght@600;700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">\n' +
   '<style>\n' + CATALOG_CSS + '\n</style>\n' +
@@ -2107,7 +2107,7 @@ const CATALOG_JS = [
 '  CATALOG.media = m.data || [];',
 '  CATALOG.banners = b.data || [];',
 '  CATALOG.giftRules = g.data || [];',
-'  if(CATALOG.settings.store_name){ document.title = CATALOG.settings.store_name; }',
+'  if(CATALOG.settings.store_name){ document.title = CATALOG.settings.store_name + " - Catálogo"; }',
 '  if(CATALOG.settings.logo_url){',
 '    var link = document.querySelector("link[rel~=\'icon\']");',
 '    if(!link){ link = document.createElement("link"); link.rel = "icon"; document.head.appendChild(link); }',
