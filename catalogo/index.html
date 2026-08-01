@@ -454,9 +454,6 @@ function buildHeader(data){
   var header = document.createElement("div"); header.className="app-header";
   var hamb = document.createElement("button"); hamb.className="hamburger-btn"; hamb.innerHTML=UI_ICONS.menu; hamb.onclick=openDrawer;
   header.appendChild(hamb);
-  var logoWrap = document.createElement("div"); logoWrap.className="header-logo-wrap";
-  logoWrap.innerHTML = data.settings.logo_url ? "<img src=\""+data.settings.logo_url+"\" alt=\"logo\">" : "<span class=\"wordmark\">"+esc(data.settings.store_name||"Catálogo")+"</span>";
-  header.appendChild(logoWrap);
   var actions = document.createElement("div"); actions.className="header-actions";
   var searchBtn = document.createElement("button"); searchBtn.className="icon-btn"; searchBtn.innerHTML=UI_ICONS.search; searchBtn.title="Buscar produtos"; searchBtn.onclick=openSearch;
   actions.appendChild(searchBtn);
