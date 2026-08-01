@@ -153,6 +153,7 @@
     <div class="nav-item" data-tab="pedidos"><span class="nav-icon">🔔</span> Pedidos <span class="nav-badge hidden" id="pedidosBadge">0</span></div>
     <div class="nav-item" data-tab="estoque"><span class="nav-icon">👗</span> Estoque</div>
     <div class="nav-item" data-tab="compras"><span class="nav-icon">📦</span> Compras</div>
+    <div class="nav-item" data-tab="fornecedores"><span class="nav-icon">🚚</span> Fornecedores</div>
     <div class="nav-item" data-tab="vendas"><span class="nav-icon">🛍️</span> Vendas</div>
     <div class="nav-item" data-tab="vendedores"><span class="nav-icon">🧑‍💼</span> Vendedores</div>
     <div class="nav-item" data-tab="clientes"><span class="nav-icon">🧑‍🤝‍🧑</span> Clientes</div>
@@ -178,6 +179,7 @@
     <div id="tab-pedidos" class="tab-panel hidden"></div>
     <div id="tab-estoque" class="tab-panel hidden"></div>
     <div id="tab-compras" class="tab-panel hidden"></div>
+    <div id="tab-fornecedores" class="tab-panel hidden"></div>
     <div id="tab-vendas" class="tab-panel hidden"></div>
     <div id="tab-vendedores" class="tab-panel hidden"></div>
     <div id="tab-clientes" class="tab-panel hidden"></div>
@@ -343,7 +345,7 @@ async function refreshPedidosBadge(){
    NAVEGAÇÃO
    ============================================================ */
 const TAB_TITLES = {
-  dashboard:'Dashboard', pedidos:'Pedidos', estoque:'Estoque', compras:'Compras', vendas:'Vendas',
+  dashboard:'Dashboard', pedidos:'Pedidos', estoque:'Estoque', compras:'Compras', fornecedores:'Fornecedores', vendas:'Vendas',
   vendedores:'Vendedores', clientes:'Clientes', marketing:'Marketing', financeiro:'Financeiro', nf:'Notas Fiscais', catalogo:'Catálogo', config:'Configurações'
 };
 async function showTab(name){
@@ -358,6 +360,7 @@ async function renderTab(name){
   if(name==='pedidos') await renderPedidos();
   if(name==='estoque') await renderEstoque();
   if(name==='compras') await renderCompras();
+  if(name==='fornecedores') await renderFornecedores();
   if(name==='vendas') await renderVendas();
   if(name==='vendedores') await renderVendedores();
   if(name==='clientes') await renderClientes();
@@ -812,8 +815,13 @@ async function renderCompras(){
 async function openPurchaseForm(){
   currentPurchaseItems = [];
   const products = await getProductsLite(true);
+  const fornecedores = await getFornecedores();
+  const supplierField = fornecedores.length
+    ? '<select id="pu_supplier"><option value="">Selecione...</option>'+fornecedores.map(f=>'<option value="'+escapeHtml(f.name)+'">'+escapeHtml(f.name)+'</option>').join('')+'</select>'
+    : '<input id="pu_supplier" placeholder="Nome do fornecedor">';
   let html = '<h3>Nova compra</h3>';
-  html += '<div class="form-row"><div class="field"><label>Fornecedor</label><input id="pu_supplier" placeholder="Nome do fornecedor"></div><div class="field"><label>Data</label><input id="pu_date" type="date" value="'+todayISO()+'"></div></div>';
+  if(!fornecedores.length){ html += '<div class="note">Dica: cadastre fornecedores na aba <strong>Fornecedores</strong> pra escolher numa lista da próxima vez, em vez de digitar.</div>'; }
+  html += '<div class="form-row"><div class="field"><label>Fornecedor</label>'+supplierField+'</div><div class="field"><label>Data</label><input id="pu_date" type="date" value="'+todayISO()+'"></div></div>';
   html += '<div id="pu_items_area"></div>';
   html += '<div class="form-row" style="align-items:end;">';
   html += '<div class="field"><label>Produto</label><select id="pu_prod">'+products.map(p=>'<option value="'+p.id+'">'+escapeHtml(p.name)+'</option>').join('')+'</select></div>';
@@ -889,6 +897,79 @@ async function deletePurchase(id){
   if(!confirm('Excluir esta compra? (não reverte estoque se já recebida)')) return;
   await q(SUPA.from('purchases').delete().eq('id', id));
   await renderCompras();
+}
+
+/* ============================================================
+   FORNECEDORES
+   ============================================================ */
+let fornecedoresCache = [];
+async function getFornecedores(force){
+  if(fornecedoresCache.length && !force) return fornecedoresCache;
+  fornecedoresCache = await q(SUPA.from('fornecedores').select('*').order('name'));
+  return fornecedoresCache;
+}
+async function renderFornecedores(){
+  const el = document.getElementById('tab-fornecedores');
+  el.innerHTML = '<div class="empty">Carregando...</div>';
+  const fornecedores = await getFornecedores(true);
+  let html = '<div class="page-desc">Cadastro de fornecedores — nome, contato, telefone e endereço. Usado para preencher automaticamente o campo "Fornecedor" em Compras.</div>';
+  html += '<button class="btn" onclick="openFornecedorForm()">+ Adicionar fornecedor</button>';
+  html += '<div class="section-title">Fornecedores (' + fornecedores.length + ')</div>';
+  if(fornecedores.length===0){
+    html += '<div class="empty">Nenhum fornecedor cadastrado ainda.</div>';
+  } else {
+    html += '<div class="card"><table><tr><th>Nome</th><th>Contato</th><th>Telefone</th><th>Endereço</th><th></th></tr>';
+    fornecedores.forEach(f=>{
+      html += '<tr><td>'+escapeHtml(f.name)+'</td><td>'+escapeHtml(f.contact||'—')+'</td><td>'+escapeHtml(f.phone||'—')+'</td><td>'+escapeHtml(f.address||'—')+'</td>';
+      html += '<td class="row-actions"><button class="btn small outline" onclick="openFornecedorForm(\''+f.id+'\')">Editar</button> <button class="btn small danger" onclick="deleteFornecedor(\''+f.id+'\')">Excluir</button></td></tr>';
+    });
+    html += '</table></div>';
+  }
+  el.innerHTML = html;
+}
+function openFornecedorForm(id){
+  let f = { id:null, name:'', contact:'', phone:'', address:'' };
+  if(id){ const found = (fornecedoresCache||[]).find(function(x){ return x.id===id; }); if(found) f = found; }
+  let html = '<h3>'+(id?'Editar fornecedor':'Adicionar fornecedor')+'</h3>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>Nome</label><input id="fo_name" value="'+escapeHtml(f.name)+'" placeholder="Nome do fornecedor"></div>';
+  html += '<div class="form-row">';
+  html += '<div class="field"><label>Contato (opcional)</label><input id="fo_contact" value="'+escapeHtml(f.contact||'')+'" placeholder="Ex: nome da pessoa de contato"></div>';
+  html += '<div class="field"><label>Telefone (opcional)</label><input id="fo_phone" value="'+escapeHtml(f.phone||'')+'" placeholder="Ex: (11) 90000-0000"></div>';
+  html += '</div>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>Endereço (opcional)</label><input id="fo_address" value="'+escapeHtml(f.address||'')+'" placeholder="Endereço completo"></div>';
+  html += '<div class="row-actions"><button class="btn" id="fo_save_btn" onclick="saveFornecedor('+(id?"'"+id+"'":'null')+')">Salvar</button><button class="btn outline" onclick="closeModal()">Cancelar</button></div>';
+  openModal(html);
+}
+async function saveFornecedor(id){
+  const name = document.getElementById('fo_name').value.trim();
+  if(!name){ toast('Informe o nome do fornecedor.'); return; }
+  const payload = {
+    name: name,
+    contact: document.getElementById('fo_contact').value.trim(),
+    phone: document.getElementById('fo_phone').value.trim(),
+    address: document.getElementById('fo_address').value.trim()
+  };
+  const btn = document.getElementById('fo_save_btn');
+  btn.disabled = true; btn.textContent = 'Salvando...';
+  let r;
+  if(id){
+    r = await SUPA.from('fornecedores').update(payload).eq('id', id);
+  } else {
+    r = await SUPA.from('fornecedores').insert([payload]);
+  }
+  if(r.error){
+    btn.disabled = false; btn.textContent = 'Salvar';
+    toast('Erro: ' + r.error.message);
+    return;
+  }
+  closeModal();
+  await renderFornecedores();
+  toast('Fornecedor salvo.');
+}
+async function deleteFornecedor(id){
+  if(!confirm('Excluir este fornecedor?')) return;
+  await q(SUPA.from('fornecedores').delete().eq('id', id));
+  await renderFornecedores();
 }
 
 /* ============================================================
