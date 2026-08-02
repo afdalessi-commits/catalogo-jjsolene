@@ -259,6 +259,40 @@ function openModal(html){
 }
 function closeModal(){ document.getElementById('modalRoot').innerHTML = ''; }
 
+/* ---------- Exportar relatórios (CSV / PDF) — usado em todas as abas ---------- */
+function downloadCSV(filename, headers, rows){
+  if(!rows || rows.length===0){ toast('Nada para exportar.'); return; }
+  let csv = headers.join(';') + '\n';
+  rows.forEach(function(row){
+    csv += row.map(function(v){ return '"'+String(v==null?'':v).replace(/"/g,'""')+'"'; }).join(';') + '\n';
+  });
+  const blob = new Blob(['﻿'+csv], { type:'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function printReport(title, headers, rows, subtitle){
+  if(!rows || rows.length===0){ toast('Nada para exportar.'); return; }
+  const w = window.open('', '_blank');
+  let html = '<html><head><title>'+escapeHtml(title)+'</title><style>'+
+    'body{font-family:sans-serif;padding:30px;color:#2b1a1f;}h1{color:#6b1f33;margin-bottom:2px;}'+
+    '.sub{color:#777;font-size:13px;margin-bottom:16px;}'+
+    'table{width:100%;border-collapse:collapse;}th,td{padding:6px 8px;border-bottom:1px solid #ddd;text-align:left;font-size:13px;}'+
+    'th{background:#f4efe6;}'+
+    '</style></head><body>';
+  html += '<h1>'+escapeHtml(title)+'</h1>';
+  html += '<div class="sub">'+escapeHtml((subtitle?subtitle+' — ':'')+'Gerado em '+new Date().toLocaleString('pt-BR'))+'</div>';
+  html += '<table><tr>'+headers.map(function(h){ return '<th>'+escapeHtml(h)+'</th>'; }).join('')+'</tr>';
+  rows.forEach(function(row){
+    html += '<tr>'+row.map(function(v){ return '<td>'+escapeHtml(v==null?'':v)+'</td>'; }).join('')+'</tr>';
+  });
+  html += '</table><script>window.print();<\/script></body></html>';
+  w.document.write(html);
+  w.document.close();
+}
+
 /* ============================================================
    CONEXÃO E LOGIN
    ============================================================ */
@@ -816,14 +850,17 @@ async function deleteTask(id){
 /* ============================================================
    PEDIDOS (fila do catálogo)
    ============================================================ */
+let ordersCache = [];
 async function renderPedidos(){
   const el = document.getElementById('tab-pedidos');
   el.innerHTML = '<div class="empty">Carregando...</div>';
   const orders = await q(SUPA.from('orders').select('*, order_items(*, products(name))').order('date',{ascending:false}).limit(100));
+  ordersCache = orders;
   const pendentes = orders.filter(o=>o.status==='pendente');
   const outros = orders.filter(o=>o.status!=='pendente');
 
   let html = '<div class="page-desc">Pedidos feitos pelo catálogo público. Ao confirmar, vira venda de verdade (baixa o estoque e lança a receita). Ao cancelar, libera o estoque reservado.</div>';
+  html += '<div class="row-actions"><button class="btn outline" onclick="exportPedidosCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportPedidosPDF()">🖨️ Exportar PDF</button></div>';
   html += '<div class="section-title">Aguardando confirmação ('+pendentes.length+')</div>';
   if(pendentes.length===0){
     html += '<div class="empty">Nenhum pedido pendente.</div>';
@@ -863,6 +900,23 @@ function pedidoCardHtml(o){
   html += '</div></div>';
   return html;
 }
+function pedidosReportData(){
+  const headers = ['Data','Cliente','Status','Itens','Cupom','Total'];
+  const rows = (ordersCache||[]).map(function(o){
+    const itemsTxt = (o.order_items||[]).map(function(it){ return (it.products?it.products.name:'?')+' (Tam '+it.size+') x'+it.qty; }).join(', ');
+    const statusTxt = o.status==='pendente'?'Pendente':o.status==='confirmado'?'Confirmado':'Cancelado';
+    return [ fmtDate(o.date), (o.customer||'Cliente não identificado'), statusTxt, itemsTxt, (o.coupon_code||''), String(o.total||0).replace('.',',') ];
+  });
+  return { headers, rows };
+}
+function exportPedidosCSV(){
+  const d = pedidosReportData();
+  downloadCSV('pedidos-'+todayISO()+'.csv', d.headers, d.rows);
+}
+function exportPedidosPDF(){
+  const d = pedidosReportData();
+  printReport('Pedidos', d.headers, d.rows);
+}
 async function confirmOrderAction(id){
   if(!confirm('Confirmar este pedido como pago? Isso vai baixar o estoque e lançar a receita no financeiro.')) return;
   const orderRows = await q(SUPA.from('orders').select('phone,total').eq('id', id));
@@ -884,6 +938,8 @@ async function cancelOrderAction(id){
 /* ============================================================
    ESTOQUE
    ============================================================ */
+let estoqueProductsCache = [];
+let estoqueCategoriesCache = [];
 async function renderEstoque(){
   const el = document.getElementById('tab-estoque');
   el.innerHTML = '<div class="empty">Carregando...</div>';
@@ -891,9 +947,12 @@ async function renderEstoque(){
     q(SUPA.from('products').select('*, product_sizes(*)').order('name')),
     getCategories()
   ]);
+  estoqueProductsCache = products;
+  estoqueCategoriesCache = cats;
   const isComercial = currentProfile && currentProfile.role==='comercial';
   let html = '<div class="page-desc">'+(isComercial ? 'Consulta de estoque disponível.' : 'Cadastre produtos, fotos, tamanhos e quantidades. O estoque é atualizado automaticamente por Compras, Vendas e Pedidos do catálogo.')+'</div>';
   if(!isComercial){ html += '<button class="btn" onclick="openProductForm()">+ Novo produto</button>'; }
+  html += '<div class="row-actions"><button class="btn outline" onclick="exportEstoqueCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportEstoquePDF()">🖨️ Exportar PDF</button></div>';
   html += '<div class="section-title">Produtos cadastrados ('+products.length+')</div>';
   if(products.length===0){
     html += '<div class="empty">Nenhum produto cadastrado ainda. Clique em "+ Novo produto" para começar.</div>';
@@ -923,6 +982,30 @@ async function renderEstoque(){
   el.innerHTML = html;
 }
 
+function estoqueReportData(){
+  const headers = ['Produto','SKU','Categoria','Tamanho','Estoque','Reservado','Disponível','Custo','Venda'];
+  const rows = [];
+  (estoqueProductsCache||[]).forEach(function(p){
+    const sizes = p.product_sizes||[];
+    if(sizes.length===0){
+      rows.push([p.name, (p.sku||''), categoryName(estoqueCategoriesCache, p.category_id), '—', 0, 0, 0, String(p.cost_price||0).replace('.',','), String(p.sale_price||0).replace('.',',')]);
+    } else {
+      sizes.forEach(function(sz){
+        const disp = (Number(sz.stock)||0)-(Number(sz.reserved)||0);
+        rows.push([p.name, (p.sku||''), categoryName(estoqueCategoriesCache, p.category_id), sz.size, (Number(sz.stock)||0), (Number(sz.reserved)||0), disp, String(p.cost_price||0).replace('.',','), String(p.sale_price||0).replace('.',',')]);
+      });
+    }
+  });
+  return { headers, rows };
+}
+function exportEstoqueCSV(){
+  const d = estoqueReportData();
+  downloadCSV('estoque-'+todayISO()+'.csv', d.headers, d.rows);
+}
+function exportEstoquePDF(){
+  const d = estoqueReportData();
+  printReport('Estoque', d.headers, d.rows);
+}
 async function openProductForm(id){
   const cats = await getCategories();
   let p = { id:null, sku:'', name:'', category_id: cats[0]?cats[0].id:'', cost_price:0, sale_price:0, description:'', promo_text:'', show_in_catalog:true, image_url:'', ncm:'', color:'', discount_type:'none', discount_value:0, discount_min_qty:1, installments_override:false, installments_max:3, installments_free_max:3, installments_interest_rate:0, product_sizes:[{size:'P',stock:0,barcode:''},{size:'M',stock:0,barcode:''},{size:'G',stock:0,barcode:''}] };
@@ -1281,6 +1364,7 @@ async function openInventoryReport(sessionId){
   let html = '<div class="page-desc">Relatório da contagem '+(sess.type==='total'?'Total':'Parcial')+' — '+fmtDate(sess.created_at)+'. Sistema x contado, com opção de corrigir o estoque direto aqui.</div>';
   html += '<div class="row-actions" style="margin-bottom:12px;">';
   if(withDiff.length+notScanned.filter(it=>!it.corrected).length>0){ html += '<button class="btn" onclick="correctAllInventoryItems()">Corrigir todas as diferenças</button>'; }
+  html += ' <button class="btn outline" onclick="exportInventoryReportCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportInventoryReportPDF()">🖨️ Exportar PDF</button>';
   html += ' <button class="btn outline" onclick="renderInventario()">← Voltar ao Inventário</button></div>';
   html += '<div class="section-title">Não bipadas ('+notScanned.length+')</div>';
   if(notScanned.length===0){ html += '<div class="empty">Nenhuma — tudo foi bipado.</div>'; }
@@ -1294,6 +1378,23 @@ async function openInventoryReport(sessionId){
   el.innerHTML = html;
 }
 
+function inventoryReportData(){
+  const headers = ['Produto','Tamanho','Sistema','Contado','Diferença','Situação'];
+  const rows = (window._invReportItems||[]).map(function(it){
+    const diff = Number(it.counted_qty) - Number(it.system_stock);
+    const situacao = it.corrected ? 'Corrigido' : (Number(it.counted_qty)===0 ? 'Não bipada' : (diff===0 ? 'OK' : 'Diferença'));
+    return [it.product_name, it.size, it.system_stock, it.counted_qty, diff, situacao];
+  });
+  return { headers, rows };
+}
+function exportInventoryReportCSV(){
+  const d = inventoryReportData();
+  downloadCSV('inventario-'+todayISO()+'.csv', d.headers, d.rows);
+}
+function exportInventoryReportPDF(){
+  const d = inventoryReportData();
+  printReport('Relatório de Inventário', d.headers, d.rows);
+}
 async function correctInventoryItemStock(itemId){
   const it = (window._invReportItems||[]).find(x=>x.id===itemId);
   if(!it || it.corrected) return;
@@ -1340,12 +1441,15 @@ async function getProductsLite(force){
   return productsLiteCache;
 }
 
+let purchasesCache = [];
 async function renderCompras(){
   const el = document.getElementById('tab-compras');
   el.innerHTML = '<div class="empty">Carregando...</div>';
   const purchases = await q(SUPA.from('purchases').select('*, purchase_items(*, products(name))').order('created_at',{ascending:false}));
+  purchasesCache = purchases;
   let html = '<div class="page-desc">Registre pedidos de compra a fornecedores. Ao marcar como recebido, o estoque e o financeiro são atualizados automaticamente.</div>';
   html += '<button class="btn" onclick="openPurchaseForm()">+ Nova compra</button>';
+  html += '<div class="row-actions"><button class="btn outline" onclick="exportComprasCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportComprasPDF()">🖨️ Exportar PDF</button></div>';
   html += '<div class="section-title">Histórico de compras ('+purchases.length+')</div>';
   if(purchases.length===0){
     html += '<div class="empty">Nenhuma compra registrada ainda.</div>';
@@ -1359,6 +1463,21 @@ async function renderCompras(){
     html += '</table></div>';
   }
   el.innerHTML = html;
+}
+function comprasReportData(){
+  const headers = ['Data','Fornecedor','Itens','Total','Status'];
+  const rows = (purchasesCache||[]).map(function(pu){
+    return [ fmtDate(pu.date), pu.supplier, (pu.purchase_items||[]).length, String(pu.total||0).replace('.',','), (pu.status==='recebido'?'Recebido':'Pendente') ];
+  });
+  return { headers, rows };
+}
+function exportComprasCSV(){
+  const d = comprasReportData();
+  downloadCSV('compras-'+todayISO()+'.csv', d.headers, d.rows);
+}
+function exportComprasPDF(){
+  const d = comprasReportData();
+  printReport('Compras', d.headers, d.rows);
 }
 async function openPurchaseForm(){
   currentPurchaseItems = [];
@@ -1478,6 +1597,7 @@ async function renderFornecedores(){
   const fornecedores = await getFornecedores(true);
   let html = '<div class="page-desc">Cadastro de fornecedores — nome, contato, telefone e endereço. Usado para preencher automaticamente o campo "Fornecedor" em Compras.</div>';
   html += '<button class="btn" onclick="openFornecedorForm()">+ Adicionar fornecedor</button>';
+  html += '<div class="row-actions"><button class="btn outline" onclick="exportFornecedoresCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportFornecedoresPDF()">🖨️ Exportar PDF</button></div>';
   html += '<div class="section-title">Fornecedores (' + fornecedores.length + ')</div>';
   if(fornecedores.length===0){
     html += '<div class="empty">Nenhum fornecedor cadastrado ainda.</div>';
@@ -1490,6 +1610,19 @@ async function renderFornecedores(){
     html += '</table></div>';
   }
   el.innerHTML = html;
+}
+function fornecedoresReportData(){
+  const headers = ['Nome','Contato','Telefone','Endereço'];
+  const rows = (fornecedoresCache||[]).map(function(f){ return [f.name, (f.contact||''), (f.phone||''), (f.address||'')]; });
+  return { headers, rows };
+}
+function exportFornecedoresCSV(){
+  const d = fornecedoresReportData();
+  downloadCSV('fornecedores-'+todayISO()+'.csv', d.headers, d.rows);
+}
+function exportFornecedoresPDF(){
+  const d = fornecedoresReportData();
+  printReport('Fornecedores', d.headers, d.rows);
 }
 function openFornecedorForm(id){
   let f = { id:null, name:'', contact:'', phone:'', address:'' };
@@ -1540,6 +1673,7 @@ async function deleteFornecedor(id){
    VENDAS
    ============================================================ */
 let currentSaleItems = [];
+let salesCache = [];
 
 async function renderVendas(){
   const el = document.getElementById('tab-vendas');
@@ -1548,8 +1682,10 @@ async function renderVendas(){
   let query = SUPA.from('sales').select('*, sale_items(*, products(name)), sellers(name)').order('created_at',{ascending:false});
   if(isComercial){ query = query.eq('seller_id', currentProfile.seller_id||'00000000-0000-0000-0000-000000000000'); }
   const sales = await q(query);
+  salesCache = sales;
   let html = '<div class="page-desc">Registre vendas feitas fora do catálogo (loja física, direto no WhatsApp, etc). O estoque é reduzido automaticamente e uma receita é lançada no financeiro.</div>';
   html += '<button class="btn" onclick="openSaleForm()">+ Nova venda</button>';
+  html += '<div class="row-actions"><button class="btn outline" onclick="exportVendasCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportVendasPDF()">🖨️ Exportar PDF</button></div>';
   html += '<div class="section-title">'+(isComercial?'Minhas vendas':'Histórico de vendas')+' ('+sales.length+')</div>';
   if(sales.length===0){
     html += '<div class="empty">Nenhuma venda registrada ainda.</div>';
@@ -1562,6 +1698,21 @@ async function renderVendas(){
     html += '</table></div>';
   }
   el.innerHTML = html;
+}
+function vendasReportData(){
+  const headers = ['Data','Cliente','Vendedor(a)','Itens','Total','Pagamento'];
+  const rows = (salesCache||[]).map(function(s){
+    return [ fmtDate(s.date), (s.customer||''), (s.sellers?s.sellers.name:''), (s.sale_items||[]).length, String(s.total||0).replace('.',','), (s.payment||'') ];
+  });
+  return { headers, rows };
+}
+function exportVendasCSV(){
+  const d = vendasReportData();
+  downloadCSV('vendas-'+todayISO()+'.csv', d.headers, d.rows);
+}
+function exportVendasPDF(){
+  const d = vendasReportData();
+  printReport('Vendas', d.headers, d.rows);
 }
 async function openSaleForm(){
   currentSaleItems = [];
@@ -1684,6 +1835,7 @@ async function deleteSale(id){
    VENDEDORES E COMISSÃO
    ============================================================ */
 let sellersLiteCache = null;
+let commResultsCache = [];
 let sellersTableOk = true;
 async function getSellersLite(force){
   if(sellersLiteCache && !force) return sellersLiteCache;
@@ -1716,6 +1868,7 @@ async function renderVendedores(){
 
   let html = '<div class="page-desc">Cadastre o(a)s vendedor(es) e a % de comissão de cada um(a). Ao lançar uma venda manual (aba Vendas), escolha o(a) vendedor(a) responsável. Vendas feitas pelo link do catálogo dele(a) (com o cupom) também entram na comissão automaticamente — a comissão total é calculada no fechamento abaixo.</div>';
   html += '<button class="btn" onclick="openSellerForm()">+ Novo(a) vendedor(a)</button>';
+  html += '<div class="row-actions"><button class="btn outline" onclick="exportVendedoresCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportVendedoresPDF()">🖨️ Exportar PDF</button></div>';
   html += '<div class="section-title">Vendedor(es) ('+sellers.length+')</div>';
   if(sellers.length===0){
     html += '<div class="empty">Nenhum(a) vendedor(a) cadastrado(a) ainda.</div>';
@@ -1740,10 +1893,41 @@ async function renderVendedores(){
   html += '<div class="field"><label>Mês</label><input type="month" id="comm_period" value="'+todayISO().slice(0,7)+'"></div>';
   html += '<button class="btn small" onclick="calcComissoes()">Calcular</button>';
   html += '</div>';
+  html += '<div class="row-actions" style="margin-top:10px;"><button class="btn small outline" onclick="exportComissoesCSV()">⬇️ Exportar CSV</button> <button class="btn small outline" onclick="exportComissoesPDF()">🖨️ Exportar PDF</button></div>';
   html += '<div id="comm_results" style="margin-top:14px;"></div>';
 
   el.innerHTML = html;
   await calcComissoes();
+}
+function vendedoresReportData(){
+  const headers = ['Nome','Telefone','Comissão','Status'];
+  const rows = (sellersLiteCache||[]).map(function(sl){
+    return [ sl.name, (sl.phone||''), (Number(sl.commission_percent)||0)+'%', (sl.active!==false?'Ativa':'Inativa') ];
+  });
+  return { headers, rows };
+}
+function exportVendedoresCSV(){
+  const d = vendedoresReportData();
+  downloadCSV('vendedores-'+todayISO()+'.csv', d.headers, d.rows);
+}
+function exportVendedoresPDF(){
+  const d = vendedoresReportData();
+  printReport('Vendedor(es)', d.headers, d.rows);
+}
+function comissoesReportData(){
+  const headers = ['Vendedor(a)','Total vendido','Comissão %','Valor comissão','Status'];
+  const rows = (commResultsCache||[]).map(function(r){
+    return [ r.name, String(r.total||0).replace('.',','), r.percent+'%', String(r.commission||0).replace('.',','), r.paidLabel ];
+  });
+  return { headers, rows };
+}
+function exportComissoesCSV(){
+  const d = comissoesReportData();
+  downloadCSV('comissoes-'+todayISO()+'.csv', d.headers, d.rows);
+}
+function exportComissoesPDF(){
+  const d = comissoesReportData();
+  printReport('Comissões', d.headers, d.rows);
 }
 
 function copySellerLink(code){
@@ -1838,15 +2022,18 @@ async function calcComissoes(){
   });
   const sellerIds = Object.keys(bySeller);
   if(sellerIds.length===0){
+    commResultsCache = [];
     el.innerHTML = '<div class="empty">Nenhuma venda com vendedor(a) atribuído(a) nesse período.</div>';
     return;
   }
   let html = '<div class="card"><table><tr><th>Vendedor(a)</th><th>Total vendido</th><th>Comissão</th><th>Valor</th><th>Status</th><th></th></tr>';
+  commResultsCache = [];
   sellerIds.forEach(function(sid){
     const d = bySeller[sid];
     const totalRounded = round2(d.total);
     const commission = round2(d.total * (d.percent/100));
     const paid = payments.find(function(p){ return p.seller_id===sid; });
+    commResultsCache.push({ name: d.name, total: totalRounded, percent: d.percent, commission: commission, paidLabel: paid ? ('Pago em '+fmtDate(paid.paid_at)) : 'Pendente' });
     html += '<tr><td>'+escapeHtml(d.name)+'</td><td>'+fmtMoney(totalRounded)+'</td><td>'+d.percent+'%</td><td>'+fmtMoney(commission)+'</td>';
     html += '<td>'+(paid?('<span class="tag ok">Pago em '+fmtDate(paid.paid_at)+'</span>'):'<span class="tag warn">Pendente</span>')+'</td>';
     html += '<td class="row-actions">'+(paid?'':('<button class="btn small" onclick="payCommission(\''+sid+'\',\''+range.start+'\',\''+range.end+'\','+totalRounded+','+commission+',\''+jsStr(d.name)+'\')">Marcar como pago</button>'))+'</td></tr>';
@@ -1881,6 +2068,7 @@ async function renderClientes(){
   customersLiteCache = customers;
   let html = '<div class="page-desc">Cadastrados automaticamente quando um cliente finaliza um pedido no catálogo — ou adicione manualmente aqui (ex: cliente que comprou na loja física). Mostra saldo de cashback e permite conferir contato.</div>';
   html += '<button class="btn" onclick="openCustomerForm()">+ Adicionar cliente</button>';
+  html += '<div class="row-actions"><button class="btn outline" onclick="exportClientesCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportClientesPDF()">🖨️ Exportar PDF</button></div>';
   html += '<div class="section-title">Clientes (' + customers.length + ')</div>';
   if(customers.length===0){
     html += '<div class="empty">Nenhum cliente cadastrado ainda.</div>';
@@ -1894,6 +2082,22 @@ async function renderClientes(){
     html += '</table></div>';
   }
   el.innerHTML = html;
+}
+function clientesReportData(){
+  const headers = ['Nome','Telefone','E-mail','Nascimento','Cashback'];
+  const rows = (customersLiteCache||[]).map(function(c){
+    const nasc = (c.birth_day && c.birth_month) ? String(c.birth_day).padStart(2,'0')+'/'+String(c.birth_month).padStart(2,'0') : '';
+    return [ c.name, (c.phone||''), (c.email||''), nasc, String(c.cashback_balance||0).replace('.',',') ];
+  });
+  return { headers, rows };
+}
+function exportClientesCSV(){
+  const d = clientesReportData();
+  downloadCSV('clientes-'+todayISO()+'.csv', d.headers, d.rows);
+}
+function exportClientesPDF(){
+  const d = clientesReportData();
+  printReport('Clientes', d.headers, d.rows);
 }
 function openCustomerForm(id){
   let c = { id:null, name:'', phone:'', email:'', birth_day:'', birth_month:'', cpf:'' };
@@ -1953,6 +2157,7 @@ async function deleteCustomer(id){
 /* ============================================================
    MARKETING — banners, brindes, cupons, lista de espera
    ============================================================ */
+let couponsCache = [];
 async function renderMarketing(){
   const el = document.getElementById('tab-marketing');
   el.innerHTML = '<div class="empty">Carregando...</div>';
@@ -1963,6 +2168,7 @@ async function renderMarketing(){
     q(SUPA.from('waitlist').select('*, products(name)').order('created_at',{ascending:false})),
     getProductsLite(true)
   ]);
+  couponsCache = coupons;
 
   let html = '<div class="page-desc">Banners do catálogo, brindes automáticos por valor de compra, cupons de desconto e a lista de "avise-me quando chegar".</div>';
 
@@ -1989,7 +2195,7 @@ async function renderMarketing(){
   }
 
   html += '<div class="section-title">🏷️ Cupons Gerais</div>';
-  html += '<button class="btn small" onclick="openCouponForm()">+ Novo cupom</button>';
+  html += '<button class="btn small" onclick="openCouponForm()">+ Novo cupom</button> <button class="btn small outline" onclick="exportCupomsCSV()">⬇️ Exportar CSV</button> <button class="btn small outline" onclick="exportCupomsPDF()">🖨️ Exportar PDF</button>';
   const sellerCoupons = coupons.filter(c=>c.seller_id);
   const generalCoupons = coupons.filter(c=>!c.seller_id);
   function couponRowHtml(c){
@@ -2025,6 +2231,22 @@ async function renderMarketing(){
   }
 
   el.innerHTML = html;
+}
+function cupomsReportData(){
+  const headers = ['Código','Desconto','Vendedor(a)/Influencer','Validade','Status'];
+  const rows = (couponsCache||[]).map(function(c){
+    const desc = c.discount_type==='percent' ? c.discount_value+'%' : String(c.discount_value||0).replace('.',',');
+    return [ c.code, desc, (c.sellers?c.sellers.name:(c.influencer_name||'')), (c.expires_at?fmtDate(c.expires_at):'sem validade'), (c.active?'Ativo':'Inativo') ];
+  });
+  return { headers, rows };
+}
+function exportCupomsCSV(){
+  const d = cupomsReportData();
+  downloadCSV('cupons-'+todayISO()+'.csv', d.headers, d.rows);
+}
+function exportCupomsPDF(){
+  const d = cupomsReportData();
+  printReport('Cupons', d.headers, d.rows);
 }
 function openBannerForm(){
   let html = '<h3>Novo banner</h3>';
@@ -2136,6 +2358,7 @@ async function renderFinanceiro(){
   html += '<button class="btn outline" onclick="openRecurringManager()">📅 Despesas fixas recorrentes</button>';
   html += '<button class="btn outline" onclick="generateRecurringExpenses()">Gerar lançamentos do mês</button>';
   html += '<button class="btn outline" onclick="exportFinanceCSV()">⬇️ Exportar CSV</button>';
+  html += '<button class="btn outline" onclick="exportFinancePDF()">🖨️ Exportar PDF</button>';
   html += '</div>';
 
   html += '<div class="section-title">📊 Resultado do período (DRE simplificado)</div>';
@@ -2323,36 +2546,38 @@ async function calcDRE(){
   el.innerHTML = html;
 }
 
-/* ---------- Exportar CSV ---------- */
-function exportFinanceCSV(){
-  const rows = financeCache||[];
-  if(rows.length===0){ toast('Nada para exportar.'); return; }
-  let csv = 'Data;Vencimento;Tipo;Categoria;Descricao;Valor;Status\n';
-  rows.forEach(function(f){
-    const cols = [
+/* ---------- Exportar CSV / PDF ---------- */
+function financeReportData(){
+  const headers = ['Data','Vencimento','Tipo','Categoria','Descrição','Valor','Status'];
+  const rows = (financeCache||[]).map(function(f){
+    return [
       fmtDate(f.date), f.due_date?fmtDate(f.due_date):'', (f.type==='receita'?'Receita':'Despesa'),
       (f.category||''), (f.description||''), String(f.amount||0).replace('.',','), (f.status==='pago'?'Pago':'Pendente')
     ];
-    csv += cols.map(function(v){ return '"'+String(v).replace(/"/g,'""')+'"'; }).join(';') + '\n';
   });
-  const blob = new Blob(['﻿'+csv], { type:'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'financeiro-'+todayISO()+'.csv';
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  return { headers, rows };
+}
+function exportFinanceCSV(){
+  const d = financeReportData();
+  downloadCSV('financeiro-'+todayISO()+'.csv', d.headers, d.rows);
+}
+function exportFinancePDF(){
+  const d = financeReportData();
+  printReport('Financeiro', d.headers, d.rows);
 }
 
 /* ============================================================
    NOTAS FISCAIS (registro interno)
    ============================================================ */
+let invoicesCache = [];
 async function renderNF(){
   const el = document.getElementById('tab-nf');
   el.innerHTML = '<div class="empty">Carregando...</div>';
   const invoices = await q(SUPA.from('invoices').select('*').order('number',{ascending:false}));
+  invoicesCache = invoices;
   let html = '<div class="page-desc">Registro interno de notas — organiza os dados para quando vocês tiverem certificado digital e um provedor de NF-e homologado.</div>';
   html += '<div class="note"><strong>Importante:</strong> esta tela ainda não emite Nota Fiscal eletrônica de verdade junto à SEFAZ. Isso exige certificado digital A1 da empresa e um provedor de NF-e (ex: Focus NFe, eNotas), que têm custo mensal. Por enquanto, esta aba organiza os dados da nota e gera um recibo simples para impressão.</div>';
-  html += '<button class="btn" style="margin-top:14px;" onclick="openInvoiceForm()">+ Registrar nota manualmente</button>';
+  html += '<div class="row-actions" style="margin-top:14px;"><button class="btn" onclick="openInvoiceForm()">+ Registrar nota manualmente</button> <button class="btn outline" onclick="exportNFCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportNFPDF()">🖨️ Exportar PDF</button></div>';
   html += '<div class="section-title">Notas registradas ('+invoices.length+')</div>';
   if(invoices.length===0){
     html += '<div class="empty">Nenhuma nota registrada ainda.</div>';
@@ -2365,6 +2590,21 @@ async function renderNF(){
     html += '</table></div>';
   }
   el.innerHTML = html;
+}
+function nfReportData(){
+  const headers = ['Nº','Data','Cliente','Documento','Valor','Status'];
+  const rows = (invoicesCache||[]).map(function(inv){
+    return [ inv.number, fmtDate(inv.date), inv.customer_name, (inv.customer_doc||''), String(inv.total||0).replace('.',','), inv.status ];
+  });
+  return { headers, rows };
+}
+function exportNFCSV(){
+  const d = nfReportData();
+  downloadCSV('notas-fiscais-'+todayISO()+'.csv', d.headers, d.rows);
+}
+function exportNFPDF(){
+  const d = nfReportData();
+  printReport('Notas Fiscais', d.headers, d.rows);
 }
 async function generateInvoiceFromSale(saleId){
   const rows = await q(SUPA.from('sales').select('*').eq('id', saleId));
