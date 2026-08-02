@@ -218,6 +218,7 @@
 <div id="toast" class="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
 <script>
 /* ============================================================
    JJ SOLENE — SISTEMA DE GESTÃO (v2 — banco de dados na nuvem)
@@ -1027,7 +1028,7 @@ async function renderEstoque(){
       });
       html += '</div>';
       html += '<div class="pmeta">Estoque total: <strong>'+total+'</strong>'+(reserved>0?' · '+reserved+' reservado(s)':'')+' · '+(p.show_in_catalog!==false?'<span class="tag ok">no catálogo</span>':'<span class="tag warn">oculto</span>')+'</div>';
-      if(!isComercial){ html += '<div class="row-actions" style="margin-top:6px;"><button class="btn small outline" onclick="openProductForm(\''+p.id+'\')">Editar</button><button class="btn small danger" onclick="deleteProduct(\''+p.id+'\')">Excluir</button></div>'; }
+      if(!isComercial){ html += '<div class="row-actions" style="margin-top:6px;"><button class="btn small outline" onclick="openProductForm(\''+p.id+'\')">Editar</button><button class="btn small outline" onclick="openPrintLabelChooser(\''+p.id+'\')">🏷️ Etiqueta</button><button class="btn small danger" onclick="deleteProduct(\''+p.id+'\')">Excluir</button></div>'; }
       html += '</div>';
     });
     html += '</div>';
@@ -1099,6 +1100,10 @@ async function openProductForm(id){
   html += '<div class="form-row">';
   html += '<div class="field"><label>NCM (opcional)</label><input id="f_ncm" value="'+escapeHtml(p.ncm||'')+'" placeholder="Ex: 6109.10.00"></div>';
   html += '<div class="field"><label>Cor</label><div style="display:flex;gap:8px;"><input id="f_color" value="'+escapeHtml(p.color||'')+'" placeholder="Ex: Vinho" style="flex:1;"><input id="f_color_hex" type="color" value="'+(p.color_hex||'#ffffff')+'" title="Amostra visual da cor" style="width:42px;height:38px;padding:2px;border:1px solid var(--border);border-radius:8px;cursor:pointer;"></div></div>';
+  html += '</div>';
+  html += '<div class="form-row">';
+  html += '<div class="field"><label>REF. (opcional, aparece na etiqueta impressa)</label><input id="f_ref" value="'+escapeHtml(p.ref||'')+'" placeholder="Ex: VDM25106"></div>';
+  html += '<div class="field"><label>Composição (opcional, aparece na etiqueta impressa)</label><input id="f_composition" value="'+escapeHtml(p.composition||'')+'" placeholder="Ex: 100% Poliéster"></div>';
   html += '</div>';
   html += '<div class="field" style="margin-bottom:8px;"><label>Tamanhos, estoque e código de barras (formato: P:5:789..., M:3, G:2 — código de barras é opcional)</label><input id="f_sizes" value="'+escapeHtml(sizesStr)+'"></div>';
   html += '<div class="section-title" style="margin-top:10px;">Desconto por quantidade (opcional)</div>';
@@ -1205,6 +1210,8 @@ async function saveProduct(id){
       ncm: document.getElementById('f_ncm').value.trim(),
       color: document.getElementById('f_color').value.trim(),
       color_hex: document.getElementById('f_color_hex').value,
+      ref: document.getElementById('f_ref').value.trim(),
+      composition: document.getElementById('f_composition').value.trim(),
       discount_type: document.getElementById('f_disc_type').value,
       discount_value: Number(document.getElementById('f_disc_value').value)||0,
       discount_min_qty: Number(document.getElementById('f_disc_minqty').value)||1,
@@ -1255,9 +1262,11 @@ async function saveProduct(id){
       await q(SUPA.from('product_media').insert([{ product_id: productId, url: v.url, media_type:'video' }]));
     }
     window._currentProductMedia = [];
+    const isNewProduct = !id;
     closeModal();
     await renderEstoque();
     toast('Produto salvo.');
+    if(isNewProduct){ openPrintLabelChooser(productId); }
   } catch(e){
     btn.disabled = false; btn.textContent = 'Salvar';
   }
@@ -1267,6 +1276,159 @@ async function deleteProduct(id){
   await q(SUPA.from('products').delete().eq('id', id));
   await renderEstoque();
   toast('Produto excluído.');
+}
+
+/* ============================================================
+   IMPRESSÃO DE ETIQUETAS (Elgin L42 Pro Full — etiqueta 50x75mm)
+   ============================================================ */
+function barcodeSvgMarkup(code){
+  if(!code) return '';
+  try{
+    const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+    JsBarcode(svg, code, { format:'CODE128', displayValue:false, margin:0, height:60 });
+    return svg.outerHTML;
+  }catch(e){ console.error('Erro ao gerar código de barras:', e); return ''; }
+}
+function labelTagHtml(p, sizeRow, settings){
+  const barcode = barcodeSvgMarkup(sizeRow.barcode);
+  let html = '<div class="tag">';
+  html += '<div class="tag-hole"></div>';
+  html += '<div class="tag-top">';
+  if(settings.logo_url){ html += '<img class="tag-logo" src="'+escapeHtml(settings.logo_url)+'">'; }
+  else { html += '<div class="tag-store-name">'+escapeHtml(settings.store_name||'')+'</div>'; }
+  if(settings.tagline){ html += '<div class="tag-tagline">'+escapeHtml(settings.tagline)+'</div>'; }
+  html += '<div class="tag-divider"></div>';
+  html += '<div class="tag-pname">'+escapeHtml(p.name)+'</div>';
+  html += '<table class="tag-specs">';
+  if(p.ref){ html += '<tr><td>REF.:</td><td>'+escapeHtml(p.ref)+'</td></tr>'; }
+  if(p.color){ html += '<tr><td>COR:</td><td><strong>'+escapeHtml(p.color)+'</strong></td></tr>'; }
+  html += '<tr><td>TAMANHO:</td><td><strong>'+escapeHtml(sizeRow.size)+'</strong></td></tr>';
+  if(p.composition){ html += '<tr><td>COMPOSIÇÃO:</td><td><strong>'+escapeHtml(p.composition)+'</strong></td></tr>'; }
+  html += '</table>';
+  if(p.sku){ html += '<div class="tag-sku">SKU: '+escapeHtml(p.sku)+'</div>'; }
+  html += '<div class="tag-divider"></div>';
+  if(barcode){ html += '<div class="tag-barcode">'+barcode+'</div><div class="tag-barcode-num">'+escapeHtml(sizeRow.barcode)+'</div>'; }
+  html += '<div class="tag-divider"></div>';
+  let contact = [];
+  if(settings.instagram){ contact.push('@'+escapeHtml((settings.instagram||'').replace(/^@/,'')) ); }
+  if(settings.website_url){ contact.push(escapeHtml(settings.website_url)); }
+  if(contact.length){ html += '<div class="tag-contact">'+contact.join(' &nbsp;|&nbsp; ')+'</div>'; }
+  if(settings.exchange_policy_text){ html += '<div class="tag-policy">'+escapeHtml(settings.exchange_policy_text)+'</div>'; }
+  html += '<div class="tag-thanks">Obrigada por escolher a '+escapeHtml(settings.store_name||'')+'!</div>';
+  html += '</div>';
+  html += '<div class="tag-cut"><span></span><span></span></div>';
+  html += '<div class="tag-bottom">';
+  html += '<div class="tag-price-label">PREÇO</div>';
+  html += '<div class="tag-price">'+fmtMoney(p.sale_price)+'</div>';
+  if(barcode){ html += '<div class="tag-barcode small">'+barcode+'</div><div class="tag-barcode-num">'+escapeHtml(sizeRow.barcode)+'</div>'; }
+  if(p.sku){ html += '<div class="tag-sku">SKU: '+escapeHtml(p.sku)+'</div>'; }
+  html += '</div>';
+  html += '</div>';
+  return html;
+}
+function printLabelSheet(entries){
+  if(!entries || entries.length===0){ toast('Nada pra imprimir.'); return; }
+  const w = window.open('', '_blank');
+  const body = entries.map(function(e){ return labelTagHtml(e.product, e.sizeRow, e.settings); }).join('');
+  let html = '<html><head><title>Etiquetas</title>';
+  html += '<link rel="preconnect" href="https://fonts.googleapis.com">';
+  html += '<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Dancing+Script:wght@600&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">';
+  html += '<style>';
+  html += '@page{ size:50mm 75mm; margin:0; }';
+  html += '*{box-sizing:border-box;}';
+  html += 'body{margin:0;font-family:"Poppins",sans-serif;color:#2b1a1f;}';
+  html += '.tag{width:50mm;height:75mm;page-break-after:always;position:relative;padding:2mm 2.5mm;display:flex;flex-direction:column;align-items:center;text-align:center;font-size:2.1mm;line-height:1.1;overflow:hidden;}';
+  html += '.tag-hole{width:2.5mm;height:2.5mm;border-radius:50%;border:0.3mm solid #ccc;margin-bottom:0.6mm;flex:none;}';
+  html += '.tag-top{display:flex;flex-direction:column;align-items:center;width:100%;}';
+  html += '.tag-logo{max-width:22mm;max-height:7mm;object-fit:contain;margin-bottom:0.3mm;}';
+  html += '.tag-store-name{font-family:"Playfair Display",serif;font-weight:700;font-size:4.5mm;color:#6b1f33;line-height:1.1;}';
+  html += '.tag-tagline{font-size:1.5mm;letter-spacing:0.4mm;color:#8a7568;margin-bottom:0.4mm;text-transform:uppercase;line-height:1.1;}';
+  html += '.tag-divider{width:100%;border-top:0.2mm solid #ddd;margin:0.5mm 0;flex:none;}';
+  html += '.tag-pname{font-weight:700;font-size:2.6mm;align-self:flex-start;margin-bottom:0.3mm;line-height:1.1;}';
+  html += '.tag-specs{width:100%;border-collapse:collapse;font-size:1.8mm;line-height:1;}';
+  html += '.tag-specs td{padding:0.15mm 0;text-align:left;}';
+  html += '.tag-specs td:first-child{color:#8a7568;padding-right:2mm;white-space:nowrap;}';
+  html += '.tag-sku{align-self:flex-end;font-size:1.8mm;margin-top:0.3mm;line-height:1;}';
+  html += '.tag-barcode{width:100%;line-height:0;}';
+  html += '.tag-barcode svg{width:100%;height:6.5mm;}';
+  html += '.tag-barcode.small svg{height:5.5mm;}';
+  html += '.tag-barcode-num{font-size:1.8mm;letter-spacing:0.3mm;line-height:1.1;}';
+  html += '.tag-contact{font-size:1.6mm;line-height:1.15;}';
+  html += '.tag-policy{font-size:1.6mm;margin-top:0.3mm;line-height:1.15;}';
+  html += '.tag-thanks{font-family:"Dancing Script",cursive;font-size:2.6mm;color:#6b1f33;margin-top:0.5mm;line-height:1.15;}';
+  html += '.tag-cut{width:100%;border-top:0.3mm dashed #bbb;margin:0.8mm 0;position:relative;display:flex;justify-content:space-between;flex:none;}';
+  html += '.tag-cut span{width:2mm;height:2mm;border-radius:50%;background:#fff;border:0.3mm solid #bbb;margin-top:-1.15mm;}';
+  html += '.tag-bottom{display:flex;flex-direction:column;align-items:center;width:100%;}';
+  html += '.tag-price-label{font-size:1.8mm;letter-spacing:0.4mm;color:#8a7568;line-height:1.1;}';
+  html += '.tag-price{font-family:"Playfair Display",serif;font-weight:700;font-size:5mm;margin:0.5mm 0;line-height:1.1;}';
+  html += '</style></head><body>' + body + '<script>window.print();<\/script></body></html>';
+  w.document.write(html);
+  w.document.close();
+}
+async function openPrintLabelChooser(productId){
+  const rows = await q(SUPA.from('products').select('*, product_sizes(*)').eq('id', productId));
+  const p = rows[0];
+  if(!p){ closeModal(); return; }
+  const sizes = p.product_sizes||[];
+  if(sizes.length===0){ toast('Esse produto não tem tamanhos cadastrados ainda.'); return; }
+  let html = '<h3>Imprimir etiqueta — '+escapeHtml(p.name)+'</h3>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>Tamanho</label><select id="pl_size">'+sizes.map(s=>'<option value="'+escapeHtml(s.size)+'"'+(!s.barcode?' disabled':'')+'>'+escapeHtml(s.size)+(s.barcode?'':' (sem código de barras)')+'</option>').join('')+'</select></div>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>Quantidade de etiquetas</label><input id="pl_qty" type="number" min="1" value="1"></div>';
+  html += '<div class="note">Etiqueta 50mm x 75mm, pra impressora Elgin L42 Pro Full. Se um tamanho aparecer desabilitado, cadastre o código de barras dele em Estoque antes.</div>';
+  html += '<div class="row-actions" style="margin-top:10px;"><button class="btn" onclick="printProductLabels(\''+productId+'\')">Imprimir</button><button class="btn outline" onclick="closeModal()">Fechar</button></div>';
+  openModal(html);
+}
+async function printProductLabels(productId){
+  const size = document.getElementById('pl_size').value;
+  const qty = Math.max(1, Number(document.getElementById('pl_qty').value)||1);
+  const rows = await q(SUPA.from('products').select('*, product_sizes(*)').eq('id', productId));
+  const p = rows[0];
+  const sizeRow = (p.product_sizes||[]).find(s=>s.size===size);
+  if(!sizeRow || !sizeRow.barcode){ toast('Esse tamanho não tem código de barras cadastrado.'); return; }
+  const settings = await getSettings();
+  closeModal();
+  const entries = [];
+  for(let i=0;i<qty;i++){ entries.push({ product: p, sizeRow: sizeRow, settings: settings }); }
+  printLabelSheet(entries);
+}
+async function offerPrintLabelsForPurchase(purchaseItems){
+  if(!purchaseItems || purchaseItems.length===0) return;
+  const productIds = [...new Set(purchaseItems.map(it=>it.product_id))];
+  const products = await q(SUPA.from('products').select('*, product_sizes(*)').in('id', productIds));
+  const settings = await getSettings();
+  const rows = purchaseItems.map(it=>{
+    const p = products.find(x=>x.id===it.product_id);
+    const sizeRow = p ? (p.product_sizes||[]).find(s=>s.size===it.size) : null;
+    return { product: p, sizeRow: sizeRow, qty: it.qty };
+  }).filter(r=>r.product && r.sizeRow);
+  if(rows.length===0) return;
+  let html = '<h3>Imprimir etiquetas desta compra?</h3>';
+  html += '<div class="page-desc">Item(ns) recebido(s) — marque quais quer etiquetar agora (aproveita a quantidade recebida como sugestão).</div>';
+  html += '<div class="items-editor">';
+  rows.forEach((r,idx)=>{
+    const hasBarcode = !!(r.sizeRow && r.sizeRow.barcode);
+    html += '<div class="item-line"><label style="display:flex;align-items:center;gap:8px;flex:1;"><input type="checkbox" class="pl_purchase_cb" data-idx="'+idx+'" '+(hasBarcode?'checked':'disabled')+'><span>'+escapeHtml(r.product.name)+' ('+escapeHtml(r.sizeRow?r.sizeRow.size:it.size)+')'+(hasBarcode?'':' — sem código de barras')+'</span></label><input type="number" min="1" value="'+r.qty+'" class="pl_purchase_qty" data-idx="'+idx+'" style="width:60px;" '+(hasBarcode?'':'disabled')+'></div>';
+  });
+  html += '</div>';
+  html += '<div class="row-actions" style="margin-top:12px;"><button class="btn" onclick="printPurchaseLabels()">Imprimir selecionadas</button><button class="btn outline" onclick="closeModal()">Agora não</button></div>';
+  window._purchaseLabelRows = rows;
+  window._purchaseLabelSettings = settings;
+  openModal(html);
+}
+function printPurchaseLabels(){
+  const rows = window._purchaseLabelRows||[];
+  const settings = window._purchaseLabelSettings;
+  const entries = [];
+  document.querySelectorAll('.pl_purchase_cb').forEach(function(cb){
+    if(!cb.checked) return;
+    const idx = Number(cb.dataset.idx);
+    const r = rows[idx];
+    const qtyInput = document.querySelector('.pl_purchase_qty[data-idx="'+idx+'"]');
+    const qty = Math.max(1, Number(qtyInput.value)||1);
+    for(let i=0;i<qty;i++){ entries.push({ product:r.product, sizeRow:r.sizeRow, settings:settings }); }
+  });
+  closeModal();
+  printLabelSheet(entries);
 }
 
 /* ============================================================
@@ -1630,6 +1792,7 @@ async function receivePurchase(id){
   await q(SUPA.from('finance').insert([{ date: todayISO(), type:'despesa', category:'Compra de mercadoria', description:'Compra — '+pu.supplier, amount: pu.total, status:'pago', origin:'compra', ref_id: pu.id }]));
   await renderCompras();
   toast('Compra recebida: estoque e financeiro atualizados.');
+  offerPrintLabelsForPurchase(pu.purchase_items);
 }
 async function deletePurchase(id){
   if(!confirm('Excluir esta compra? (não reverte estoque se já recebida)')) return;
@@ -4202,6 +4365,10 @@ async function renderConfig(){
   html += '<div class="field"><label>WhatsApp (com DDD, ex: 11987654321)</label><input id="cf_wpp" value="'+escapeHtml(s.whatsapp)+'"></div>';
   html += '</div>';
   html += '<div class="field" style="margin-bottom:8px;"><label>Texto de entrega (aparece no topo do catálogo)</label><input id="cf_delivery" value="'+escapeHtml(s.delivery_text)+'"></div>';
+  html += '<div class="form-row">';
+  html += '<div class="field"><label>Site (aparece na etiqueta impressa)</label><input id="cf_website" value="'+escapeHtml(s.website_url||'')+'" placeholder="Ex: www.jjsolene.com.br"></div>';
+  html += '<div class="field"><label>Política de troca (aparece na etiqueta impressa)</label><input id="cf_exchange" value="'+escapeHtml(s.exchange_policy_text||'')+'" placeholder="Ex: Sete dias corridos para troca"></div>';
+  html += '</div>';
   html += '</div>';
 
   html += '<div class="form-block"><h4>Atendimento personalizado (rodapé do catálogo)</h4>';
@@ -4334,6 +4501,8 @@ async function saveConfig(){
     store_name: document.getElementById('cf_name').value.trim() || 'Loja',
     tagline: document.getElementById('cf_tagline').value.trim(),
     instagram: document.getElementById('cf_ig').value.trim(),
+    website_url: document.getElementById('cf_website').value.trim(),
+    exchange_policy_text: document.getElementById('cf_exchange').value.trim(),
     whatsapp: document.getElementById('cf_wpp').value.trim(),
     delivery_text: document.getElementById('cf_delivery').value.trim(),
     pix_key: document.getElementById('cf_pix').value.trim(),
