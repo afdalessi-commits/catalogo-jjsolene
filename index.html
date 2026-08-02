@@ -175,6 +175,7 @@
     <div class="nav-item" data-tab="compras"><span class="nav-icon">📦</span> Compras</div>
     <div class="nav-item" data-tab="fornecedores"><span class="nav-icon">🚚</span> Fornecedores</div>
     <div class="nav-item" data-tab="vendas"><span class="nav-icon">🛍️</span> Vendas</div>
+    <div class="nav-item" data-tab="bagdelivery"><span class="nav-icon">👜</span> Bag Delivery</div>
     <div class="nav-item" data-tab="vendedores"><span class="nav-icon">🧑‍💼</span> Vendedor(es)</div>
     <div class="nav-item" data-tab="clientes"><span class="nav-icon">🧑‍🤝‍🧑</span> Clientes</div>
     <div class="nav-item" data-tab="marketing"><span class="nav-icon">📣</span> Marketing</div>
@@ -203,6 +204,7 @@
     <div id="tab-compras" class="tab-panel hidden"></div>
     <div id="tab-fornecedores" class="tab-panel hidden"></div>
     <div id="tab-vendas" class="tab-panel hidden"></div>
+    <div id="tab-bagdelivery" class="tab-panel hidden"></div>
     <div id="tab-vendedores" class="tab-panel hidden"></div>
     <div id="tab-clientes" class="tab-panel hidden"></div>
     <div id="tab-marketing" class="tab-panel hidden"></div>
@@ -372,7 +374,7 @@ async function doLogout(){
   document.getElementById('appRoot').classList.add('hidden');
   renderLoginScreen();
 }
-const COMERCIAL_ALLOWED_TABS = ['agenda','pedidos','estoque','vendas','clientes'];
+const COMERCIAL_ALLOWED_TABS = ['agenda','pedidos','estoque','vendas','bagdelivery','clientes'];
 async function enterApp(){
   const profileR = await SUPA.from('profiles').select('*').eq('id', currentUser.id).maybeSingle();
   if(profileR.error || !profileR.data){
@@ -452,7 +454,7 @@ async function refreshPedidosBadge(){
    NAVEGAÇÃO
    ============================================================ */
 const TAB_TITLES = {
-  dashboard:'Dashboard', agenda:'Agenda', pedidos:'Pedidos', estoque:'Estoque', inventario:'Inventário', compras:'Compras', fornecedores:'Fornecedores', vendas:'Vendas',
+  dashboard:'Dashboard', agenda:'Agenda', pedidos:'Pedidos', estoque:'Estoque', inventario:'Inventário', compras:'Compras', fornecedores:'Fornecedores', vendas:'Vendas', bagdelivery:'Bag Delivery',
   vendedores:'Vendedor(es)', clientes:'Clientes', marketing:'Marketing', financeiro:'Financeiro', nf:'Notas Fiscais', catalogo:'Catálogo', config:'Configurações'
 };
 async function showTab(name){
@@ -474,6 +476,7 @@ async function renderTab(name){
   if(name==='compras') await renderCompras();
   if(name==='fornecedores') await renderFornecedores();
   if(name==='vendas') await renderVendas();
+  if(name==='bagdelivery') await renderBagDelivery();
   if(name==='vendedores') await renderVendedores();
   if(name==='clientes') await renderClientes();
   if(name==='marketing') await renderMarketing();
@@ -1881,6 +1884,273 @@ async function deleteSale(id){
   if(!confirm('Excluir esta venda? (não reverte o estoque automaticamente)')) return;
   await q(SUPA.from('sales').delete().eq('id', id));
   await renderVendas();
+}
+
+/* ============================================================
+   BAG DELIVERY (sacolinha — peças enviadas pra experimentar em casa)
+   ============================================================ */
+let currentBagItems = [];
+let bagsCache = [];
+let currentBagCloseItems = [];
+function fmtDateTime(iso){
+  if(!iso) return '—';
+  const d = new Date(iso);
+  if(isNaN(d)) return iso;
+  return d.toLocaleDateString('pt-BR')+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+}
+function toDatetimeLocalValue(d){
+  const pad = n=>String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
+}
+async function renderBagDelivery(){
+  const el = document.getElementById('tab-bagdelivery');
+  el.innerHTML = '<div class="empty">Carregando...</div>';
+  const isComercial = currentProfile && currentProfile.role==='comercial';
+  let query = SUPA.from('bag_deliveries').select('*, bag_delivery_items(*, products(name)), sellers(name)').order('sent_at',{ascending:false});
+  if(isComercial){ query = query.eq('seller_id', currentProfile.seller_id||'00000000-0000-0000-0000-000000000000'); }
+  const bags = await q(query);
+  bagsCache = bags;
+  let html = '<div class="page-desc">Sacola de peças enviada pra cliente experimentar em casa. As peças ficam reservadas (não somem do estoque) até você registrar o que ficou e o que voltou.</div>';
+  html += '<button class="btn" onclick="openBagForm()">+ Nova sacola</button>';
+  html += '<div class="row-actions" style="margin-top:10px;"><button class="btn outline" onclick="exportBagCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportBagPDF()">🖨️ Exportar PDF</button></div>';
+  html += '<div class="section-title">Sacolas ('+bags.length+')</div>';
+  if(bags.length===0){
+    html += '<div class="empty">Nenhuma sacola registrada ainda.</div>';
+  } else {
+    html += '<div class="card"><table><tr><th>Cliente</th><th>Vendedor(a)</th><th>Enviada em</th><th>Prazo</th><th>Itens</th><th>Status</th><th></th></tr>';
+    bags.forEach(b=>{
+      const overdue = b.status==='aberta' && b.deadline && new Date(b.deadline).getTime() < Date.now();
+      html += '<tr><td>'+escapeHtml(b.customer_name)+(b.customer_phone?' <a href="'+waLink(b.customer_phone)+'" target="_blank" title="Chamar no WhatsApp">💬</a>':'')+'</td>';
+      html += '<td>'+(b.sellers?escapeHtml(b.sellers.name):'—')+'</td>';
+      html += '<td>'+fmtDateTime(b.sent_at)+'</td>';
+      html += '<td>'+(b.deadline?('<span'+(overdue?' class="tag bad"':'')+'>'+fmtDateTime(b.deadline)+(overdue?' (vencida)':'')+'</span>'):'—')+'</td>';
+      html += '<td>'+(b.bag_delivery_items||[]).length+' peça(s)</td>';
+      html += '<td>'+(b.status==='fechada'?'<span class="tag ok">Fechada</span>':'<span class="tag warn">Em andamento</span>')+'</td>';
+      html += '<td class="row-actions">'+(b.status==='aberta'?'<button class="btn small" onclick="openBagCloseForm(\''+b.id+'\')">Fechar sacola</button>':'')+' <button class="btn small danger" onclick="deleteBagDelivery(\''+b.id+'\')">Excluir</button></td></tr>';
+    });
+    html += '</table></div>';
+  }
+  el.innerHTML = html;
+}
+async function openBagForm(){
+  currentBagItems = [];
+  const products = await getProductsLite(true);
+  const isComercial = currentProfile && currentProfile.role==='comercial';
+  const defaultDeadline = new Date(Date.now()+24*3600000);
+  let html = '<h3>Nova sacola (Bag Delivery)</h3>';
+  html += '<div class="form-row"><div class="field"><label>Nome da cliente</label><input id="bg_customer" placeholder="Nome"></div><div class="field"><label>Telefone</label><input id="bg_phone" placeholder="Com DDD"></div></div>';
+  if(!isComercial){
+    const sellers = await getSellersLite(true);
+    html += '<div class="field" style="margin-bottom:8px;"><label>Vendedor(a) (opcional)</label><select id="bg_seller"><option value="">— sem vendedor(a) —</option>'+sellers.filter(sl=>sl.active!==false).map(sl=>'<option value="'+sl.id+'">'+escapeHtml(sl.name)+'</option>').join('')+'</select></div>';
+  }
+  html += '<div class="field" style="margin-bottom:8px;"><label>Prazo pra devolver/decidir</label><input id="bg_deadline" type="datetime-local" value="'+toDatetimeLocalValue(defaultDeadline)+'"></div>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>📷 Bipar código de barras (soma 1 unidade a cada leitura)</label><input id="bg_barcode" placeholder="Clique aqui e escaneie..." onkeydown="if(event.key===\'Enter\'){ event.preventDefault(); scanBarcodeBag(); }"></div>';
+  html += '<div id="bg_items_area"></div>';
+  html += '<div class="form-row" style="align-items:end;">';
+  html += '<div class="field"><label>Produto</label><select id="bg_prod" onchange="fillBagPrice()">'+products.map(p=>'<option value="'+p.id+'">'+escapeHtml(p.name)+'</option>').join('')+'</select></div>';
+  html += '<div class="field"><label>Tamanho</label><input id="bg_size" placeholder="Ex: M"></div>';
+  html += '<div class="field"><label>Qtd</label><input id="bg_qty" type="number" value="1" min="1"></div>';
+  html += '<div class="field"><label>Preço unit. (R$)</label><input id="bg_price" type="number" step="0.01" value="0"></div>';
+  html += '</div>';
+  html += '<button class="btn outline small" onclick="addBagItem()">+ Adicionar item</button>';
+  html += '<div class="row-actions" style="margin-top:16px;"><button class="btn" onclick="saveBagDelivery()">Enviar sacola</button><button class="btn outline" onclick="closeModal()">Cancelar</button></div>';
+  openModal(html);
+  if(products.length===0){
+    document.getElementById('bg_items_area').innerHTML = '<div class="note">Cadastre produtos no Estoque antes de montar uma sacola.</div>';
+  } else {
+    fillBagPrice();
+    renderBagItemsArea();
+    document.getElementById('bg_barcode').focus();
+  }
+}
+function fillBagPrice(){
+  const p = (productsLiteCache||[]).find(x=>x.id===document.getElementById('bg_prod').value);
+  if(p) document.getElementById('bg_price').value = p.sale_price;
+}
+function scanBarcodeBag(){
+  const input = document.getElementById('bg_barcode');
+  const code = input.value.trim();
+  input.value = '';
+  if(!code) return;
+  const found = findProductByBarcode(code, productsLiteCache||[]);
+  if(!found){ toast('Código não encontrado: '+code); input.focus(); return; }
+  const disponivel = (Number(found.sizeRow.stock)||0) - (Number(found.sizeRow.reserved)||0);
+  const existing = currentBagItems.find(it=> it.productId===found.product.id && it.size===found.size);
+  const qtyAfter = (existing?existing.qty:0) + 1;
+  if(qtyAfter > disponivel){
+    if(!confirm('Estoque disponível insuficiente para '+found.product.name+' ('+found.size+'): disponível '+disponivel+'. Continuar mesmo assim?')){ input.focus(); return; }
+  }
+  if(existing){ existing.qty += 1; }
+  else { currentBagItems.push({ productId: found.product.id, size: found.size, qty: 1, price: found.product.sale_price||0 }); }
+  renderBagItemsArea();
+  toast('+1 '+found.product.name+' ('+found.size+')');
+  input.focus();
+}
+function addBagItem(){
+  const productId = document.getElementById('bg_prod').value;
+  const size = document.getElementById('bg_size').value.trim() || 'Único';
+  const qty = Number(document.getElementById('bg_qty').value)||1;
+  const price = Number(document.getElementById('bg_price').value)||0;
+  const p = (productsLiteCache||[]).find(x=>x.id===productId);
+  const sz = p ? (p.product_sizes||[]).find(s=>s.size===size) : null;
+  const disponivel = sz ? (Number(sz.stock)||0)-(Number(sz.reserved)||0) : null;
+  if(sz && disponivel < qty){
+    if(!confirm('Estoque disponível insuficiente para '+p.name+' ('+size+'): disponível '+disponivel+'. Continuar mesmo assim?')) return;
+  }
+  currentBagItems.push({ productId, size, qty, price });
+  renderBagItemsArea();
+}
+function removeBagItem(idx){
+  currentBagItems.splice(idx,1);
+  renderBagItemsArea();
+}
+function renderBagItemsArea(){
+  const area = document.getElementById('bg_items_area');
+  if(currentBagItems.length===0){
+    area.innerHTML = '<div class="note">Nenhum item adicionado ainda.</div>';
+    return;
+  }
+  let html = '<div class="items-editor">';
+  let total = 0;
+  currentBagItems.forEach((it,idx)=>{
+    const p = (productsLiteCache||[]).find(x=>x.id===it.productId);
+    const subtotal = it.qty*it.price;
+    total += subtotal;
+    html += '<div class="item-line"><span>'+escapeHtml(p?p.name:'?')+' ('+escapeHtml(it.size)+')</span><span>Qtd: '+it.qty+'</span><span>'+fmtMoney(it.price)+'</span><span>'+fmtMoney(subtotal)+'</span><button class="btn small danger" onclick="removeBagItem('+idx+')">x</button></div>';
+  });
+  html += '<div class="total-line">Total (se tudo ficar): '+fmtMoney(total)+'</div></div>';
+  area.innerHTML = html;
+}
+async function saveBagDelivery(){
+  if(currentBagItems.length===0){ toast('Adicione ao menos um item.'); return; }
+  const customerName = document.getElementById('bg_customer').value.trim();
+  if(!customerName){ toast('Informe o nome da cliente.'); return; }
+  const isComercial = currentProfile && currentProfile.role==='comercial';
+  const sellerId = isComercial ? (currentProfile.seller_id||null) : (document.getElementById('bg_seller').value || null);
+  const deadlineVal = document.getElementById('bg_deadline').value;
+  const inserted = await q(SUPA.from('bag_deliveries').insert([{
+    customer_name: customerName,
+    customer_phone: document.getElementById('bg_phone').value.trim(),
+    seller_id: sellerId,
+    deadline: deadlineVal ? new Date(deadlineVal).toISOString() : null,
+    created_by: currentUser.id
+  }]).select());
+  const bagId = inserted[0].id;
+  await q(SUPA.from('bag_delivery_items').insert(currentBagItems.map(it=>({
+    bag_id: bagId, product_id: it.productId, size: it.size, qty: it.qty, unit_price: it.price
+  }))));
+  for(const it of currentBagItems){
+    await q(SUPA.rpc('reserve_bag_stock', { p_product_id: it.productId, p_size: it.size, p_delta: it.qty }));
+  }
+  productsLiteCache = null;
+  closeModal();
+  await renderBagDelivery();
+  toast('Sacola enviada. As peças ficaram reservadas até você fechar a sacola.');
+}
+async function deleteBagDelivery(id){
+  if(!confirm('Excluir esta sacola? Se ela ainda estiver em andamento, as peças reservadas serão liberadas.')) return;
+  const items = await q(SUPA.from('bag_delivery_items').select('*').eq('bag_id', id).eq('decision','pendente'));
+  for(const it of items){
+    await q(SUPA.rpc('reserve_bag_stock', { p_product_id: it.product_id, p_size: it.size, p_delta: -it.qty }));
+  }
+  await q(SUPA.from('bag_deliveries').delete().eq('id', id));
+  productsLiteCache = null;
+  await renderBagDelivery();
+}
+async function openBagCloseForm(id){
+  const rows = await q(SUPA.from('bag_deliveries').select('*').eq('id', id));
+  const bag = rows[0];
+  const items = await q(SUPA.from('bag_delivery_items').select('*, products(name)').eq('bag_id', id));
+  currentBagCloseItems = items.map(it=> Object.assign({}, it, { product_name: it.products?it.products.name:'?', decision: it.decision==='pendente'?null:it.decision }));
+  let html = '<h3>Fechar sacola — '+escapeHtml(bag.customer_name)+'</h3>';
+  html += '<div class="page-desc">Marque "Ficou" ou "Devolveu" pra cada peça. As que ficarem viram venda; as devolvidas só liberam a reserva.</div>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>📷 Bipar as peças que voltaram (marca automaticamente como "Devolveu")</label><input id="bgc_barcode" placeholder="Clique aqui e escaneie..." onkeydown="if(event.key===\'Enter\'){ event.preventDefault(); scanBarcodeBagReturn(); }"></div>';
+  html += '<div id="bgc_items_area"></div>';
+  html += '<div class="row-actions" style="margin-top:16px;"><button class="btn" id="bgc_save_btn" onclick="closeBagDelivery(\''+id+'\')">Fechar sacola</button><button class="btn outline" onclick="closeModal()">Cancelar</button></div>';
+  openModal(html);
+  renderBagCloseItemsArea();
+  document.getElementById('bgc_barcode').focus();
+}
+function renderBagCloseItemsArea(){
+  const area = document.getElementById('bgc_items_area');
+  let html = '<div class="items-editor">';
+  currentBagCloseItems.forEach((it,idx)=>{
+    html += '<div class="item-line"><span>'+escapeHtml(it.product_name)+' ('+escapeHtml(it.size)+') x'+it.qty+'</span>';
+    html += '<span><button type="button" class="btn small'+(it.decision==='ficou'?'':' outline')+'" onclick="setBagItemDecision('+idx+',\'ficou\')">Ficou</button> <button type="button" class="btn small'+(it.decision==='devolvido'?'':' outline')+'" onclick="setBagItemDecision('+idx+',\'devolvido\')">Devolveu</button></span></div>';
+  });
+  html += '</div>';
+  const pending = currentBagCloseItems.filter(it=>!it.decision).length;
+  if(pending>0){ html += '<div class="note">Faltam '+pending+' peça(s) sem decisão.</div>'; }
+  area.innerHTML = html;
+}
+function setBagItemDecision(idx, decision){
+  currentBagCloseItems[idx].decision = decision;
+  renderBagCloseItemsArea();
+}
+function scanBarcodeBagReturn(){
+  const input = document.getElementById('bgc_barcode');
+  const code = input.value.trim();
+  input.value = '';
+  if(!code) return;
+  const found = findProductByBarcode(code, productsLiteCache||[]);
+  if(!found){ toast('Código não encontrado: '+code); input.focus(); return; }
+  const item = currentBagCloseItems.find(it=> it.product_id===found.product.id && it.size===found.size);
+  if(!item){ toast('Essa peça não faz parte desta sacola.'); input.focus(); return; }
+  item.decision = 'devolvido';
+  renderBagCloseItemsArea();
+  toast('Marcada como devolvida: '+found.product.name+' ('+found.size+')');
+  input.focus();
+}
+async function closeBagDelivery(id){
+  const pending = currentBagCloseItems.filter(it=>!it.decision);
+  if(pending.length>0){ toast('Marque "Ficou" ou "Devolveu" pra todas as peças antes de fechar.'); return; }
+  const btn = document.getElementById('bgc_save_btn');
+  btn.disabled = true; btn.textContent = 'Fechando...';
+  try{
+    const kept = currentBagCloseItems.filter(it=>it.decision==='ficou');
+    const returned = currentBagCloseItems.filter(it=>it.decision==='devolvido');
+    for(const it of currentBagCloseItems){
+      await q(SUPA.rpc('reserve_bag_stock', { p_product_id: it.product_id, p_size: it.size, p_delta: -it.qty }));
+    }
+    for(const it of kept){
+      await q(SUPA.rpc('adjust_stock', { p_product_id: it.product_id, p_size: it.size, p_delta: -it.qty }));
+      await q(SUPA.from('bag_delivery_items').update({ decision:'ficou' }).eq('id', it.id));
+    }
+    for(const it of returned){
+      await q(SUPA.from('bag_delivery_items').update({ decision:'devolvido' }).eq('id', it.id));
+    }
+    if(kept.length>0){
+      const rows = await q(SUPA.from('bag_deliveries').select('*').eq('id', id));
+      const bag = rows[0];
+      const total = kept.reduce((s,it)=> s+it.qty*it.unit_price, 0);
+      const inserted = await q(SUPA.from('sales').insert([{ date: todayISO(), customer: bag.customer_name, payment: 'Bag Delivery', total, seller_id: bag.seller_id }]).select());
+      const saleId = inserted[0].id;
+      await q(SUPA.from('sale_items').insert(kept.map(it=>({ sale_id: saleId, product_id: it.product_id, size: it.size, qty: it.qty, price: it.unit_price }))));
+      await q(SUPA.from('finance').insert([{ date: todayISO(), type:'receita', category:'Venda', description:'Bag Delivery — '+bag.customer_name, amount: total, status:'pago', origin:'venda', ref_id: saleId }]));
+    }
+    await q(SUPA.from('bag_deliveries').update({ status:'fechada', closed_at: new Date().toISOString() }).eq('id', id));
+    productsLiteCache = null;
+    closeModal();
+    await renderBagDelivery();
+    toast('Sacola fechada. '+kept.length+' peça(s) vendida(s), '+returned.length+' devolvida(s).');
+  } catch(e){
+    btn.disabled = false; btn.textContent = 'Fechar sacola';
+  }
+}
+function bagReportData(){
+  const headers = ['Cliente','Vendedor(a)','Enviada em','Prazo','Itens','Status'];
+  const rows = (bagsCache||[]).map(function(b){
+    return [ b.customer_name, (b.sellers?b.sellers.name:''), fmtDateTime(b.sent_at), (b.deadline?fmtDateTime(b.deadline):''), (b.bag_delivery_items||[]).length, (b.status==='fechada'?'Fechada':'Em andamento') ];
+  });
+  return { headers, rows };
+}
+function exportBagCSV(){
+  const d = bagReportData();
+  downloadCSV('bag-delivery-'+todayISO()+'.csv', d.headers, d.rows);
+}
+function exportBagPDF(){
+  const d = bagReportData();
+  printReport('Bag Delivery', d.headers, d.rows);
 }
 
 /* ============================================================
