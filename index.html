@@ -1394,13 +1394,27 @@ async function renderMarketing(){
 
   html += '<div class="section-title">🏷️ Cupons de desconto</div>';
   html += '<button class="btn small" onclick="openCouponForm()">+ Novo cupom</button>';
-  if(coupons.length===0){ html += '<div class="empty" style="margin-top:10px;">Nenhum cupom cadastrado.</div>'; }
+  const sellerCoupons = coupons.filter(c=>c.seller_id);
+  const generalCoupons = coupons.filter(c=>!c.seller_id);
+  function couponRowHtml(c){
+    const desc = c.discount_type==='percent' ? c.discount_value+'%' : fmtMoney(c.discount_value);
+    return '<tr><td><strong>'+escapeHtml(c.code)+'</strong></td><td>'+desc+'</td><td>'+escapeHtml(c.influencer_name||'—')+'</td><td>'+(c.expires_at?fmtDate(c.expires_at):'sem validade')+'</td><td>'+(c.active?'<span class="tag ok">Ativo</span>':'<span class="tag warn">Inativo</span>')+'</td><td><button class="btn small danger" onclick="deleteCoupon(\''+c.id+'\')">Excluir</button></td></tr>';
+  }
+  html += '<div style="font-size:13px;font-weight:700;color:var(--wine-dark);margin:14px 0 4px;">🧑‍💼 Cupons de vendedoras (usados pra rastrear a venda dela no catálogo)</div>';
+  if(sellerCoupons.length===0){ html += '<div class="empty" style="margin-top:6px;">Nenhum cupom vinculado a vendedora ainda. Crie um cupom abaixo e escolha a vendedora dona dele.</div>'; }
   else {
-    html += '<div class="card" style="margin-top:10px;"><table><tr><th>Código</th><th>Desconto</th><th>Vendedora</th><th>Influencer</th><th>Validade</th><th>Status</th><th></th></tr>';
-    coupons.forEach(c=>{
+    html += '<div class="card" style="margin-top:6px;"><table><tr><th>Código</th><th>Desconto</th><th>Vendedora</th><th>Validade</th><th>Status</th><th></th></tr>';
+    sellerCoupons.forEach(c=>{
       const desc = c.discount_type==='percent' ? c.discount_value+'%' : fmtMoney(c.discount_value);
-      html += '<tr><td><strong>'+escapeHtml(c.code)+'</strong></td><td>'+desc+'</td><td>'+(c.sellers?escapeHtml(c.sellers.name):'—')+'</td><td>'+escapeHtml(c.influencer_name||'—')+'</td><td>'+(c.expires_at?fmtDate(c.expires_at):'sem validade')+'</td><td>'+(c.active?'<span class="tag ok">Ativo</span>':'<span class="tag warn">Inativo</span>')+'</td><td><button class="btn small danger" onclick="deleteCoupon(\''+c.id+'\')">Excluir</button></td></tr>';
+      html += '<tr><td><strong>'+escapeHtml(c.code)+'</strong></td><td>'+desc+'</td><td><span class="tag info">'+escapeHtml(c.sellers?c.sellers.name:'?')+'</span></td><td>'+(c.expires_at?fmtDate(c.expires_at):'sem validade')+'</td><td>'+(c.active?'<span class="tag ok">Ativo</span>':'<span class="tag warn">Inativo</span>')+'</td><td><button class="btn small danger" onclick="deleteCoupon(\''+c.id+'\')">Excluir</button></td></tr>';
     });
+    html += '</table></div>';
+  }
+  html += '<div style="font-size:13px;font-weight:700;color:var(--wine-dark);margin:16px 0 4px;">🏷️ Cupons gerais (promoções, influencers, etc — sem vendedora)</div>';
+  if(generalCoupons.length===0){ html += '<div class="empty" style="margin-top:6px;">Nenhum cupom geral cadastrado.</div>'; }
+  else {
+    html += '<div class="card" style="margin-top:6px;"><table><tr><th>Código</th><th>Desconto</th><th>Influencer</th><th>Validade</th><th>Status</th><th></th></tr>';
+    generalCoupons.forEach(c=>{ html += couponRowHtml(c); });
     html += '</table></div>';
   }
 
