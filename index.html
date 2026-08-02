@@ -663,10 +663,25 @@ async function openProductForm(id){
   html += '<div class="field"><label>SKU / código</label><input id="f_sku" value="'+escapeHtml(p.sku)+'" placeholder="Opcional"></div>';
   html += '<div class="field"><label>Categoria</label><select id="f_cat">'+catOptions+'</select></div>';
   html += '</div>';
+  let entryVal = p.entry_value, costIdx = p.cost_index, saleIdx = p.sale_index;
+  if(entryVal==null){
+    entryVal = p.cost_price || 0;
+    costIdx = 1;
+    saleIdx = (p.cost_price>0) ? round2(p.sale_price/p.cost_price) : 1;
+  } else {
+    costIdx = costIdx!=null ? costIdx : 1;
+    saleIdx = saleIdx!=null ? saleIdx : 1;
+  }
+  html += '<div class="section-title" style="margin-top:4px;">Precificação</div>';
   html += '<div class="form-row">';
-  html += '<div class="field"><label>Preço de custo (R$)</label><input id="f_cost" type="number" step="0.01" value="'+p.cost_price+'"></div>';
-  html += '<div class="field"><label>Preço de venda (R$)</label><input id="f_price" type="number" step="0.01" value="'+p.sale_price+'"></div>';
+  html += '<div class="field"><label>Valor de Entrada (R$)</label><input id="f_entry" type="number" step="0.01" value="'+entryVal+'" oninput="recalcPricing()"></div>';
+  html += '<div class="field"><label>Índice de Custo</label><input id="f_cost_idx" type="number" step="0.01" value="'+costIdx+'" oninput="recalcPricing()"></div>';
   html += '</div>';
+  html += '<div class="form-row">';
+  html += '<div class="field"><label>Valor de Custo (calculado)</label><input id="f_cost_calc" type="text" disabled style="background:#f4efe6;"></div>';
+  html += '<div class="field"><label>Índice de Venda</label><input id="f_sale_idx" type="number" step="0.01" value="'+saleIdx+'" oninput="recalcPricing()"></div>';
+  html += '</div>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>Valor de Venda (calculado)</label><input id="f_sale_calc" type="text" disabled style="background:#f4efe6;"></div>';
   html += '<div class="form-row">';
   html += '<div class="field"><label>NCM (opcional)</label><input id="f_ncm" value="'+escapeHtml(p.ncm||'')+'" placeholder="Ex: 6109.10.00"></div>';
   html += '<div class="field"><label>Cor</label><input id="f_color" value="'+escapeHtml(p.color||'')+'" placeholder="Ex: Vinho"></div>';
@@ -701,6 +716,16 @@ async function openProductForm(id){
   html += '<button class="btn outline" onclick="closeModal()">Cancelar</button>';
   html += '</div>';
   openModal(html);
+  recalcPricing();
+}
+function recalcPricing(){
+  const entry = Number(document.getElementById('f_entry').value)||0;
+  const costIdx = Number(document.getElementById('f_cost_idx').value)||0;
+  const saleIdx = Number(document.getElementById('f_sale_idx').value)||0;
+  const cost = entry*costIdx;
+  const sale = cost*saleIdx;
+  document.getElementById('f_cost_calc').value = fmtMoney(cost);
+  document.getElementById('f_sale_calc').value = fmtMoney(sale);
 }
 function renderMediaGalleryThumbs(media){
   return (media||[]).map(m=>{
@@ -746,12 +771,20 @@ async function saveProduct(id){
   btn.disabled = true; btn.textContent = 'Salvando...';
   try{
     const sizes = parseSizesInput(document.getElementById('f_sizes').value);
+    const entryVal = Number(document.getElementById('f_entry').value)||0;
+    const costIdx = Number(document.getElementById('f_cost_idx').value)||0;
+    const saleIdx = Number(document.getElementById('f_sale_idx').value)||0;
+    const costPrice = round2(entryVal*costIdx);
+    const salePrice = round2(costPrice*saleIdx);
     const payload = {
       sku: document.getElementById('f_sku').value.trim(),
       name: name,
       category_id: document.getElementById('f_cat').value,
-      cost_price: Number(document.getElementById('f_cost').value)||0,
-      sale_price: Number(document.getElementById('f_price').value)||0,
+      entry_value: entryVal,
+      cost_index: costIdx,
+      sale_index: saleIdx,
+      cost_price: costPrice,
+      sale_price: salePrice,
       description: document.getElementById('f_desc').value.trim(),
       promo_text: document.getElementById('f_promo').value.trim(),
       show_in_catalog: document.getElementById('f_showcat').checked,
