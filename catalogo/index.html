@@ -200,6 +200,8 @@ var SB_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJl
 var sb = window.supabase.createClient(SB_URL, SB_ANON);
 var CATALOG = { settings:null, categories:[], products:[], media:[], banners:[], giftRules:[], activeTab:"inicio", filterCategoryId:null, heroSlide:0 };
 var cart = [];
+var refCouponCode = new URLSearchParams(window.location.search).get("cupom");
+var refCouponTried = false;
 var appliedCoupon = null;
 var couponMessage = "";
 var FAV_KEY = "jjsolene_favoritos";
@@ -866,7 +868,8 @@ function renderCart(){
   var total = Math.max(0, subtotal - discount);
   var sinalPercent = CATALOG.settings.sinal_percent || 100;
   var sinalValor = total * (sinalPercent/100);
-  var footHtml = "<div class=\"coupon-row\"><input id=\"coupon_input\" placeholder=\"Cupom de desconto\" value=\""+esc(appliedCoupon?appliedCoupon.code:"")+"\"><button type=\"button\" onclick=\"applyCoupon()\">Aplicar</button></div>";
+  var couponInputValue = appliedCoupon ? appliedCoupon.code : (refCouponCode||"");
+  var footHtml = "<div class=\"coupon-row\"><input id=\"coupon_input\" placeholder=\"Cupom de desconto\" value=\""+esc(couponInputValue)+"\"><button type=\"button\" onclick=\"applyCoupon()\">Aplicar</button></div>";
   if(couponMessage){ footHtml += "<div class=\"coupon-msg "+(appliedCoupon?"ok":"err")+"\">"+esc(couponMessage)+"</div>"; }
   footHtml += "<input id=\"chk_name\" placeholder=\"Seu nome\">";
   footHtml += "<input id=\"chk_phone\" placeholder=\"Seu telefone (com DDD)\">";
@@ -885,6 +888,7 @@ function renderCart(){
     footHtml += "<div class=\"pix-box\"><strong>Pix:</strong> "+esc(CATALOG.settings.pix_key)+"<br>Titular: "+esc(CATALOG.settings.pix_titular||"")+"<br>"+esc(CATALOG.settings.payment_note||"")+"</div>";
   }
   footEl.innerHTML = footHtml;
+  if(refCouponCode && !appliedCoupon && !refCouponTried){ refCouponTried = true; applyCoupon(); }
 }
 async function checkout(){
   if(cart.length===0) return;

@@ -208,6 +208,7 @@ const SB_ANON_KEY = 'jjsolene_sb_anon';
 // qualquer aparelho/navegador direto na tela de login, sem precisar colar nada.
 const DEFAULT_SB_URL = 'https://pcvcpylcpuvprpkydbxf.supabase.co';
 const DEFAULT_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBjdmNweWxjcHV2cHJwa3lkYnhmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxNzE1NzUsImV4cCI6MjEwMDc0NzU3NX0.-Lsvw55ao1TRVv-uybojs6R_Uo7rlXcRseatiECa0fM';
+const CATALOG_PUBLIC_URL = 'https://afdalessi-commits.github.io/catalogo-jjsolene/catalogo/';
 let SUPA = null;
 let currentUser = null;
 let categoriesCache = null;
@@ -1116,15 +1117,25 @@ async function renderVendedores(){
     el.innerHTML = MIGRACAO_FASE2_AVISO;
     return;
   }
-  let html = '<div class="page-desc">Cadastre as vendedoras e a % de comissão de cada uma. Ao lançar uma venda manual (aba Vendas), escolha a vendedora responsável — a comissão dela é calculada automaticamente no fechamento abaixo.</div>';
+  const sellerCoupons = await q(SUPA.from('coupons').select('code, seller_id').not('seller_id','is',null));
+  const couponsBySeller = {};
+  sellerCoupons.forEach(function(c){ (couponsBySeller[c.seller_id] = couponsBySeller[c.seller_id]||[]).push(c.code); });
+
+  let html = '<div class="page-desc">Cadastre as vendedoras e a % de comissão de cada uma. Ao lançar uma venda manual (aba Vendas), escolha a vendedora responsável. Vendas feitas pelo link do catálogo dela (com o cupom) também entram na comissão automaticamente — a comissão total é calculada no fechamento abaixo.</div>';
   html += '<button class="btn" onclick="openSellerForm()">+ Nova vendedora</button>';
   html += '<div class="section-title">Vendedoras ('+sellers.length+')</div>';
   if(sellers.length===0){
     html += '<div class="empty">Nenhuma vendedora cadastrada ainda.</div>';
   } else {
-    html += '<div class="card"><table><tr><th>Nome</th><th>Telefone</th><th>Comissão</th><th>Status</th><th></th></tr>';
+    html += '<div class="card"><table><tr><th>Nome</th><th>Telefone</th><th>Comissão</th><th>Status</th><th>Link do catálogo</th><th></th></tr>';
     sellers.forEach(function(sl){
       html += '<tr><td>'+escapeHtml(sl.name)+'</td><td>'+escapeHtml(sl.phone||'—')+'</td><td>'+(Number(sl.commission_percent)||0)+'%</td><td>'+(sl.active!==false?'<span class="tag ok">Ativa</span>':'<span class="tag warn">Inativa</span>')+'</td>';
+      const codes = couponsBySeller[sl.id];
+      if(codes && codes.length){
+        html += '<td><button class="btn small outline" onclick="copySellerLink(\''+jsStr(codes[0])+'\')">Copiar link ('+escapeHtml(codes[0])+')</button></td>';
+      } else {
+        html += '<td style="color:var(--muted);font-size:12px;">Crie um cupom em Marketing e vincule a ela</td>';
+      }
       html += '<td class="row-actions"><button class="btn small outline" onclick="openSellerForm(\''+sl.id+'\')">Editar</button> <button class="btn small danger" onclick="deleteSeller(\''+sl.id+'\')">Excluir</button></td></tr>';
     });
     html += '</table></div>';
@@ -1140,6 +1151,15 @@ async function renderVendedores(){
 
   el.innerHTML = html;
   await calcComissoes();
+}
+
+function copySellerLink(code){
+  const link = CATALOG_PUBLIC_URL + '?cupom=' + encodeURIComponent(code);
+  navigator.clipboard.writeText(link).then(function(){
+    toast('Link copiado! É só colar e enviar pra cliente.');
+  }, function(){
+    prompt('Copie o link abaixo:', link);
+  });
 }
 
 function openSellerForm(id){
@@ -1197,6 +1217,12 @@ async function calcComissoes(){
   const range = monthRange(period);
   const salesR = await SUPA.from('sales').select('total, seller_id, sellers(name, commission_percent)').gte('date', range.start).lte('date', range.end).not('seller_id','is',null);
   if(salesR.error){ console.error(salesR.error); el.innerHTML = MIGRACAO_FASE2_AVISO; return; }
+  const couponsR = await SUPA.from('coupons').select('code, seller_id, sellers(name, commission_percent)').not('seller_id','is',null);
+  const couponMap = {};
+  (couponsR.data||[]).forEach(function(c){ couponMap[c.code] = c; });
+  const ordersR = (couponsR.data && couponsR.data.length)
+    ? await SUPA.from('orders').select('total, coupon_code').eq('status','confirmado').not('coupon_code','is',null).gte('date', range.start).lte('date', range.end)
+    : { data: [] };
   const paymentsR = await SUPA.from('commission_payments').select('*').eq('period_start', range.start).eq('period_end', range.end);
   if(paymentsR.error){ console.error(paymentsR.error); el.innerHTML = MIGRACAO_FASE2_AVISO; return; }
   const sales = salesR.data;
@@ -1208,6 +1234,14 @@ async function calcComissoes(){
       bySeller[s.seller_id] = { name: s.sellers?s.sellers.name:'?', percent: s.sellers?(Number(s.sellers.commission_percent)||0):0, total: 0 };
     }
     bySeller[s.seller_id].total += Number(s.total)||0;
+  });
+  (ordersR.data||[]).forEach(function(o){
+    const c = couponMap[o.coupon_code];
+    if(!c || !c.seller_id) return;
+    if(!bySeller[c.seller_id]){
+      bySeller[c.seller_id] = { name: c.sellers?c.sellers.name:'?', percent: c.sellers?(Number(c.sellers.commission_percent)||0):0, total: 0 };
+    }
+    bySeller[c.seller_id].total += Number(o.total)||0;
   });
   const sellerIds = Object.keys(bySeller);
   if(sellerIds.length===0){
@@ -1329,7 +1363,7 @@ async function renderMarketing(){
   const [banners, gifts, coupons, waitlistRows, products] = await Promise.all([
     q(SUPA.from('banners').select('*').order('sort_order')),
     q(SUPA.from('gift_rules').select('*, products(name)').order('min_total')),
-    q(SUPA.from('coupons').select('*').order('created_at',{ascending:false})),
+    q(SUPA.from('coupons').select('*, sellers(name)').order('created_at',{ascending:false})),
     q(SUPA.from('waitlist').select('*, products(name)').order('created_at',{ascending:false})),
     getProductsLite(true)
   ]);
@@ -1362,10 +1396,10 @@ async function renderMarketing(){
   html += '<button class="btn small" onclick="openCouponForm()">+ Novo cupom</button>';
   if(coupons.length===0){ html += '<div class="empty" style="margin-top:10px;">Nenhum cupom cadastrado.</div>'; }
   else {
-    html += '<div class="card" style="margin-top:10px;"><table><tr><th>Código</th><th>Desconto</th><th>Influencer</th><th>Validade</th><th>Status</th><th></th></tr>';
+    html += '<div class="card" style="margin-top:10px;"><table><tr><th>Código</th><th>Desconto</th><th>Vendedora</th><th>Influencer</th><th>Validade</th><th>Status</th><th></th></tr>';
     coupons.forEach(c=>{
       const desc = c.discount_type==='percent' ? c.discount_value+'%' : fmtMoney(c.discount_value);
-      html += '<tr><td><strong>'+escapeHtml(c.code)+'</strong></td><td>'+desc+'</td><td>'+escapeHtml(c.influencer_name||'—')+'</td><td>'+(c.expires_at?fmtDate(c.expires_at):'sem validade')+'</td><td>'+(c.active?'<span class="tag ok">Ativo</span>':'<span class="tag warn">Inativo</span>')+'</td><td><button class="btn small danger" onclick="deleteCoupon(\''+c.id+'\')">Excluir</button></td></tr>';
+      html += '<tr><td><strong>'+escapeHtml(c.code)+'</strong></td><td>'+desc+'</td><td>'+(c.sellers?escapeHtml(c.sellers.name):'—')+'</td><td>'+escapeHtml(c.influencer_name||'—')+'</td><td>'+(c.expires_at?fmtDate(c.expires_at):'sem validade')+'</td><td>'+(c.active?'<span class="tag ok">Ativo</span>':'<span class="tag warn">Inativo</span>')+'</td><td><button class="btn small danger" onclick="deleteCoupon(\''+c.id+'\')">Excluir</button></td></tr>';
     });
     html += '</table></div>';
   }
@@ -1425,9 +1459,13 @@ async function deleteGift(id){
   await q(SUPA.from('gift_rules').delete().eq('id', id));
   await renderMarketing();
 }
-function openCouponForm(){
+async function openCouponForm(){
+  const sellers = await getSellersLite();
+  const sellerOptions = '<option value="">— nenhuma / cupom geral —</option>'+sellers.filter(sl=>sl.active!==false).map(sl=>'<option value="'+sl.id+'">'+escapeHtml(sl.name)+'</option>').join('');
   let html = '<h3>Novo cupom</h3>';
   html += '<div class="form-row"><div class="field"><label>Código</label><input id="cp_code" placeholder="Ex: INFLU10" style="text-transform:uppercase;"></div><div class="field"><label>Influencer/origem (opcional)</label><input id="cp_influencer"></div></div>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>Vendedora dona do cupom (opcional)</label><select id="cp_seller">'+sellerOptions+'</select></div>';
+  html += '<div class="note">Vinculando a uma vendedora, as vendas do catálogo feitas com esse cupom entram automaticamente na comissão dela.</div>';
   html += '<div class="form-row"><div class="field"><label>Tipo</label><select id="cp_type"><option value="percent">Percentual (%)</option><option value="fixed">Valor fixo (R$)</option></select></div><div class="field"><label>Valor</label><input id="cp_value" type="number" step="0.01" value="10"></div></div>';
   html += '<div class="form-row"><div class="field"><label>Validade (opcional)</label><input id="cp_expires" type="date"></div><div class="field"><label>Limite de usos (opcional)</label><input id="cp_limit" type="number" min="1"></div></div>';
   html += '<div class="row-actions"><button class="btn" onclick="saveCoupon()">Salvar</button><button class="btn outline" onclick="closeModal()">Cancelar</button></div>';
@@ -1438,6 +1476,7 @@ async function saveCoupon(){
   if(!code){ toast('Informe o código do cupom.'); return; }
   await q(SUPA.from('coupons').insert([{
     code, influencer_name: document.getElementById('cp_influencer').value.trim(),
+    seller_id: document.getElementById('cp_seller').value || null,
     discount_type: document.getElementById('cp_type').value, discount_value: Number(document.getElementById('cp_value').value)||0,
     expires_at: document.getElementById('cp_expires').value || null,
     usage_limit: document.getElementById('cp_limit').value ? Number(document.getElementById('cp_limit').value) : null
@@ -2008,6 +2047,8 @@ const CATALOG_JS = [
 'var sb = window.supabase.createClient(SB_URL, SB_ANON);',
 'var CATALOG = { settings:null, categories:[], products:[], media:[], banners:[], giftRules:[], activeTab:"inicio", filterCategoryId:null, heroSlide:0 };',
 'var cart = [];',
+'var refCouponCode = new URLSearchParams(window.location.search).get("cupom");',
+'var refCouponTried = false;',
 'var appliedCoupon = null;',
 'var couponMessage = "";',
 'var FAV_KEY = "jjsolene_favoritos";',
@@ -2674,7 +2715,8 @@ const CATALOG_JS = [
 '  var total = Math.max(0, subtotal - discount);',
 '  var sinalPercent = CATALOG.settings.sinal_percent || 100;',
 '  var sinalValor = total * (sinalPercent/100);',
-'  var footHtml = "<div class=\\"coupon-row\\"><input id=\\"coupon_input\\" placeholder=\\"Cupom de desconto\\" value=\\""+esc(appliedCoupon?appliedCoupon.code:"")+"\\"><button type=\\"button\\" onclick=\\"applyCoupon()\\">Aplicar</button></div>";',
+'  var couponInputValue = appliedCoupon ? appliedCoupon.code : (refCouponCode||"");',
+'  var footHtml = "<div class=\\"coupon-row\\"><input id=\\"coupon_input\\" placeholder=\\"Cupom de desconto\\" value=\\""+esc(couponInputValue)+"\\"><button type=\\"button\\" onclick=\\"applyCoupon()\\">Aplicar</button></div>";',
 '  if(couponMessage){ footHtml += "<div class=\\"coupon-msg "+(appliedCoupon?"ok":"err")+"\\">"+esc(couponMessage)+"</div>"; }',
 '  footHtml += "<input id=\\"chk_name\\" placeholder=\\"Seu nome\\">";',
 '  footHtml += "<input id=\\"chk_phone\\" placeholder=\\"Seu telefone (com DDD)\\">";',
@@ -2693,6 +2735,7 @@ const CATALOG_JS = [
 '    footHtml += "<div class=\\"pix-box\\"><strong>Pix:</strong> "+esc(CATALOG.settings.pix_key)+"<br>Titular: "+esc(CATALOG.settings.pix_titular||"")+"<br>"+esc(CATALOG.settings.payment_note||"")+"</div>";',
 '  }',
 '  footEl.innerHTML = footHtml;',
+'  if(refCouponCode && !appliedCoupon && !refCouponTried){ refCouponTried = true; applyCoupon(); }',
 '}',
 'async function checkout(){',
 '  if(cart.length===0) return;',
