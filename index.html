@@ -211,6 +211,7 @@ const DEFAULT_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYm
 const CATALOG_PUBLIC_URL = 'https://afdalessi-commits.github.io/catalogo-jjsolene/catalogo/';
 let SUPA = null;
 let currentUser = null;
+let currentProfile = null;
 let categoriesCache = null;
 
 /* ---------- helpers gerais ---------- */
@@ -311,16 +312,39 @@ async function submitLogin(){
 async function doLogout(){
   await SUPA.auth.signOut();
   currentUser = null;
+  currentProfile = null;
   document.getElementById('appRoot').classList.add('hidden');
   renderLoginScreen();
 }
+const COMERCIAL_ALLOWED_TABS = ['pedidos','estoque','vendas','clientes'];
 async function enterApp(){
+  const profileR = await SUPA.from('profiles').select('*').eq('id', currentUser.id).maybeSingle();
+  if(profileR.error || !profileR.data){
+    document.getElementById('appRoot').classList.add('hidden');
+    document.getElementById('authScreen').innerHTML =
+      '<div class="auth-wrap"><div class="auth-card">' +
+      '<h2>Acesso não liberado</h2>' +
+      '<div class="sub">Seu login existe, mas ainda não tem um nível de acesso configurado neste sistema. Peça para quem administra liberar seu acesso em Configurações → Equipe.</div>' +
+      '<button class="btn full" onclick="doLogout()">Sair</button>' +
+      '</div></div>';
+    return;
+  }
+  currentProfile = profileR.data;
   document.getElementById('authScreen').innerHTML = '';
   document.getElementById('appRoot').classList.remove('hidden');
   document.getElementById('whoLabel').textContent = currentUser ? currentUser.email : '';
-  showTab('dashboard');
+  applyRolePermissions();
+  showTab(currentProfile.role==='comercial' ? 'pedidos' : 'dashboard');
   refreshPedidosBadge();
   applyBranding();
+}
+function applyRolePermissions(){
+  const isComercial = currentProfile && currentProfile.role==='comercial';
+  document.querySelectorAll('.nav-item').forEach(function(item){
+    if(COMERCIAL_ALLOWED_TABS.indexOf(item.dataset.tab)===-1){
+      item.classList.toggle('hidden', isComercial);
+    }
+  });
 }
 async function applyBranding(){
   try{
@@ -350,6 +374,9 @@ const TAB_TITLES = {
   vendedores:'Vendedor(es)', clientes:'Clientes', marketing:'Marketing', financeiro:'Financeiro', nf:'Notas Fiscais', catalogo:'Catálogo', config:'Configurações'
 };
 async function showTab(name){
+  if(currentProfile && currentProfile.role==='comercial' && COMERCIAL_ALLOWED_TABS.indexOf(name)===-1){
+    name = 'pedidos';
+  }
   document.querySelectorAll('.tab-panel').forEach(p=>p.classList.add('hidden'));
   document.getElementById('tab-'+name).classList.remove('hidden');
   document.querySelectorAll('.nav-item').forEach(n=> n.classList.toggle('active', n.dataset.tab===name));
@@ -586,8 +613,9 @@ async function renderEstoque(){
     q(SUPA.from('products').select('*, product_sizes(*)').order('name')),
     getCategories()
   ]);
-  let html = '<div class="page-desc">Cadastre produtos, fotos, tamanhos e quantidades. O estoque é atualizado automaticamente por Compras, Vendas e Pedidos do catálogo.</div>';
-  html += '<button class="btn" onclick="openProductForm()">+ Novo produto</button>';
+  const isComercial = currentProfile && currentProfile.role==='comercial';
+  let html = '<div class="page-desc">'+(isComercial ? 'Consulta de estoque disponível.' : 'Cadastre produtos, fotos, tamanhos e quantidades. O estoque é atualizado automaticamente por Compras, Vendas e Pedidos do catálogo.')+'</div>';
+  if(!isComercial){ html += '<button class="btn" onclick="openProductForm()">+ Novo produto</button>'; }
   html += '<div class="section-title">Produtos cadastrados ('+products.length+')</div>';
   if(products.length===0){
     html += '<div class="empty">Nenhum produto cadastrado ainda. Clique em "+ Novo produto" para começar.</div>';
@@ -609,7 +637,7 @@ async function renderEstoque(){
       });
       html += '</div>';
       html += '<div class="pmeta">Estoque total: <strong>'+total+'</strong>'+(reserved>0?' · '+reserved+' reservado(s)':'')+' · '+(p.show_in_catalog!==false?'<span class="tag ok">no catálogo</span>':'<span class="tag warn">oculto</span>')+'</div>';
-      html += '<div class="row-actions" style="margin-top:6px;"><button class="btn small outline" onclick="openProductForm(\''+p.id+'\')">Editar</button><button class="btn small danger" onclick="deleteProduct(\''+p.id+'\')">Excluir</button></div>';
+      if(!isComercial){ html += '<div class="row-actions" style="margin-top:6px;"><button class="btn small outline" onclick="openProductForm(\''+p.id+'\')">Editar</button><button class="btn small danger" onclick="deleteProduct(\''+p.id+'\')">Excluir</button></div>'; }
       html += '</div>';
     });
     html += '</div>';
@@ -981,17 +1009,20 @@ let currentSaleItems = [];
 async function renderVendas(){
   const el = document.getElementById('tab-vendas');
   el.innerHTML = '<div class="empty">Carregando...</div>';
-  const sales = await q(SUPA.from('sales').select('*, sale_items(*, products(name)), sellers(name)').order('created_at',{ascending:false}));
+  const isComercial = currentProfile && currentProfile.role==='comercial';
+  let query = SUPA.from('sales').select('*, sale_items(*, products(name)), sellers(name)').order('created_at',{ascending:false});
+  if(isComercial){ query = query.eq('seller_id', currentProfile.seller_id||'00000000-0000-0000-0000-000000000000'); }
+  const sales = await q(query);
   let html = '<div class="page-desc">Registre vendas feitas fora do catálogo (loja física, direto no WhatsApp, etc). O estoque é reduzido automaticamente e uma receita é lançada no financeiro.</div>';
   html += '<button class="btn" onclick="openSaleForm()">+ Nova venda</button>';
-  html += '<div class="section-title">Histórico de vendas ('+sales.length+')</div>';
+  html += '<div class="section-title">'+(isComercial?'Minhas vendas':'Histórico de vendas')+' ('+sales.length+')</div>';
   if(sales.length===0){
     html += '<div class="empty">Nenhuma venda registrada ainda.</div>';
   } else {
     html += '<div class="card"><table><tr><th>Data</th><th>Cliente</th><th>Vendedor(a)</th><th>Itens</th><th>Total</th><th>Pagamento</th><th></th></tr>';
     sales.forEach(s=>{
       html += '<tr><td>'+fmtDate(s.date)+'</td><td>'+escapeHtml(s.customer||'—')+'</td><td>'+escapeHtml(s.sellers?s.sellers.name:'—')+'</td><td>'+(s.sale_items||[]).length+' item(ns)</td><td>'+fmtMoney(s.total)+'</td><td>'+escapeHtml(s.payment||'—')+'</td>';
-      html += '<td class="row-actions">'+(s.invoice_id?'<span class="tag info">Nota gerada</span>':'<button class="btn small outline" onclick="generateInvoiceFromSale(\''+s.id+'\')">Gerar nota</button>')+' <button class="btn small danger" onclick="deleteSale(\''+s.id+'\')">Excluir</button></td></tr>';
+      html += '<td class="row-actions">'+(s.invoice_id?'<span class="tag info">Nota gerada</span>':'<button class="btn small outline" onclick="generateInvoiceFromSale(\''+s.id+'\')">Gerar nota</button>')+(isComercial?'':' <button class="btn small danger" onclick="deleteSale(\''+s.id+'\')">Excluir</button>')+'</td></tr>';
     });
     html += '</table></div>';
   }
@@ -1000,11 +1031,16 @@ async function renderVendas(){
 async function openSaleForm(){
   currentSaleItems = [];
   const products = await getProductsLite(true);
-  const sellers = await getSellersLite(true);
+  const isComercial = currentProfile && currentProfile.role==='comercial';
   let html = '<h3>Nova venda</h3>';
   html += '<div class="form-row"><div class="field"><label>Cliente</label><input id="sa_customer" placeholder="Nome do cliente"></div><div class="field"><label>Data</label><input id="sa_date" type="date" value="'+todayISO()+'"></div></div>';
-  html += '<div class="form-row"><div class="field"><label>Forma de pagamento</label><select id="sa_payment"><option>Pix</option><option>Dinheiro</option><option>Cartão de crédito</option><option>Cartão de débito</option><option>Boleto</option></select></div>';
-  html += '<div class="field"><label>Vendedor(a) (opcional)</label><select id="sa_seller"><option value="">— sem vendedor(a) —</option>'+sellers.filter(sl=>sl.active!==false).map(sl=>'<option value="'+sl.id+'">'+escapeHtml(sl.name)+'</option>').join('')+'</select></div></div>';
+  if(isComercial){
+    html += '<div class="form-row"><div class="field"><label>Forma de pagamento</label><select id="sa_payment"><option>Pix</option><option>Dinheiro</option><option>Cartão de crédito</option><option>Cartão de débito</option><option>Boleto</option></select></div></div>';
+  } else {
+    const sellers = await getSellersLite(true);
+    html += '<div class="form-row"><div class="field"><label>Forma de pagamento</label><select id="sa_payment"><option>Pix</option><option>Dinheiro</option><option>Cartão de crédito</option><option>Cartão de débito</option><option>Boleto</option></select></div>';
+    html += '<div class="field"><label>Vendedor(a) (opcional)</label><select id="sa_seller"><option value="">— sem vendedor(a) —</option>'+sellers.filter(sl=>sl.active!==false).map(sl=>'<option value="'+sl.id+'">'+escapeHtml(sl.name)+'</option>').join('')+'</select></div></div>';
+  }
   html += '<div id="sa_items_area"></div>';
   html += '<div class="form-row" style="align-items:end;">';
   html += '<div class="field"><label>Produto</label><select id="sa_prod" onchange="fillSalePrice()">'+products.map(p=>'<option value="'+p.id+'">'+escapeHtml(p.name)+'</option>').join('')+'</select></div>';
@@ -1066,7 +1102,8 @@ async function saveSale(){
   const customer = document.getElementById('sa_customer').value.trim();
   const date = document.getElementById('sa_date').value || todayISO();
   const payment = document.getElementById('sa_payment').value;
-  const sellerId = document.getElementById('sa_seller').value || null;
+  const isComercial = currentProfile && currentProfile.role==='comercial';
+  const sellerId = isComercial ? (currentProfile.seller_id||null) : (document.getElementById('sa_seller').value || null);
   const total = currentSaleItems.reduce((s,it)=> s+it.qty*it.price, 0);
   const inserted = await q(SUPA.from('sales').insert([{ date, customer, payment, total, seller_id: sellerId }]).select());
   const saleId = inserted[0].id;
@@ -1296,7 +1333,7 @@ async function renderClientes(){
     customers.forEach(c=>{
       const nasc = (c.birth_day && c.birth_month) ? String(c.birth_day).padStart(2,'0')+'/'+String(c.birth_month).padStart(2,'0') : '—';
       html += '<tr><td>'+escapeHtml(c.name)+'</td><td>'+escapeHtml(c.phone||'—')+'</td><td>'+escapeHtml(c.email||'—')+'</td><td>'+nasc+'</td><td>'+fmtMoney(c.cashback_balance)+'</td>';
-      html += '<td class="row-actions"><button class="btn small outline" onclick="openCustomerForm(\''+c.id+'\')">Editar</button> <button class="btn small danger" onclick="deleteCustomer(\''+c.id+'\')">Excluir</button></td></tr>';
+      html += '<td class="row-actions"><button class="btn small outline" onclick="openCustomerForm(\''+c.id+'\')">Editar</button>'+((currentProfile && currentProfile.role==='comercial')?'':' <button class="btn small danger" onclick="deleteCustomer(\''+c.id+'\')">Excluir</button>')+'</td></tr>';
     });
     html += '</table></div>';
   }
@@ -2859,7 +2896,7 @@ const CATALOG_JS = [
 async function renderConfig(){
   const el = document.getElementById('tab-config');
   el.innerHTML = '<div class="empty">Carregando...</div>';
-  const [s, cats] = await Promise.all([getSettings(), getCategories(true)]);
+  const [s, cats, teamProfiles, sellersForEq] = await Promise.all([getSettings(), getCategories(true), q(SUPA.from('profiles').select('*, sellers(name)').order('created_at')), getSellersLite(true)]);
   let html = '<div class="page-desc">Dados da loja usados no catálogo público e nos recibos.</div>';
   html += '<div class="form-block"><h4>Loja</h4>';
   html += '<div class="form-row">';
@@ -2928,7 +2965,52 @@ async function renderConfig(){
   });
   html += '</table></div>';
 
+  html += '<div class="section-title">👥 Equipe (níveis de acesso)</div>';
+  html += '<div class="page-desc">Cada pessoa precisa primeiro ter um login criado no Supabase (Authentication → Add user, com e-mail e senha). Depois é só colar o e-mail dela aqui e escolher o nível de acesso.</div>';
+  html += '<div class="card">';
+  if(teamProfiles.length===0){ html += '<div class="empty">Nenhum acesso configurado ainda (fora o seu, que já está liberado).</div>'; }
+  else {
+    html += '<table><tr><th>Nome</th><th>Papel</th><th>Vendedor(a) vinculado(a)</th><th></th></tr>';
+    teamProfiles.forEach(p=>{
+      html += '<tr><td>'+escapeHtml(p.name||'—')+'</td><td>'+(p.role==='admin'?'<span class="tag ok">Admin</span>':'<span class="tag info">Comercial</span>')+'</td><td>'+(p.sellers?escapeHtml(p.sellers.name):'—')+'</td><td><button class="btn small danger" onclick="removeAccess(\''+p.id+'\')">Remover acesso</button></td></tr>';
+    });
+    html += '</table>';
+  }
+  html += '<div class="form-row" style="align-items:end;margin-top:14px;">';
+  html += '<div class="field"><label>E-mail do login</label><input id="eq_email" placeholder="email@exemplo.com"></div>';
+  html += '<div class="field"><label>Nome de exibição</label><input id="eq_name" placeholder="Ex: Maria"></div>';
+  html += '<div class="field"><label>Papel</label><select id="eq_role" onchange="toggleEqSeller()"><option value="comercial">Comercial</option><option value="admin">Admin</option></select></div>';
+  html += '</div>';
+  html += '<div class="field" id="eq_seller_field" style="margin-bottom:8px;"><label>Vendedor(a) vinculado(a) (pra vendas do catálogo/manuais saírem no nome dela)</label><select id="eq_seller"><option value="">— nenhum —</option>'+sellersForEq.map(sl=>'<option value="'+sl.id+'">'+escapeHtml(sl.name)+'</option>').join('')+'</select></div>';
+  html += '<button class="btn small" onclick="saveAccess()">+ Dar/atualizar acesso</button>';
+  html += '</div>';
+
   el.innerHTML = html;
+}
+function toggleEqSeller(){
+  const role = document.getElementById('eq_role').value;
+  document.getElementById('eq_seller_field').classList.toggle('hidden', role!=='comercial');
+}
+async function saveAccess(){
+  const email = document.getElementById('eq_email').value.trim();
+  if(!email){ toast('Informe o e-mail do login.'); return; }
+  const role = document.getElementById('eq_role').value;
+  const name = document.getElementById('eq_name').value.trim();
+  const sellerId = role==='comercial' ? (document.getElementById('eq_seller').value || null) : null;
+  const idR = await SUPA.rpc('get_user_id_by_email', { p_email: email });
+  if(idR.error || !idR.data){
+    toast('E-mail não encontrado. Confirme que já criou esse login em Supabase → Authentication → Add user.');
+    return;
+  }
+  const r = await SUPA.from('profiles').upsert([{ id: idR.data, role, seller_id: sellerId, name }]);
+  if(r.error){ toast('Erro: '+r.error.message); return; }
+  toast('Acesso salvo.');
+  await renderConfig();
+}
+async function removeAccess(id){
+  if(!confirm('Remover o acesso desta pessoa? O login dela continua existindo no Supabase, só perde a permissão de entrar no sistema.')) return;
+  await q(SUPA.from('profiles').delete().eq('id', id));
+  await renderConfig();
 }
 async function saveConfig(){
   await q(SUPA.from('settings').update({
