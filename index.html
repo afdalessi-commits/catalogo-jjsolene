@@ -155,7 +155,7 @@
     <div class="nav-item" data-tab="compras"><span class="nav-icon">📦</span> Compras</div>
     <div class="nav-item" data-tab="fornecedores"><span class="nav-icon">🚚</span> Fornecedores</div>
     <div class="nav-item" data-tab="vendas"><span class="nav-icon">🛍️</span> Vendas</div>
-    <div class="nav-item" data-tab="vendedores"><span class="nav-icon">🧑‍💼</span> Vendedores</div>
+    <div class="nav-item" data-tab="vendedores"><span class="nav-icon">🧑‍💼</span> Vendedor(es)</div>
     <div class="nav-item" data-tab="clientes"><span class="nav-icon">🧑‍🤝‍🧑</span> Clientes</div>
     <div class="nav-item" data-tab="marketing"><span class="nav-icon">📣</span> Marketing</div>
     <div class="nav-item" data-tab="financeiro"><span class="nav-icon">💰</span> Financeiro</div>
@@ -347,7 +347,7 @@ async function refreshPedidosBadge(){
    ============================================================ */
 const TAB_TITLES = {
   dashboard:'Dashboard', pedidos:'Pedidos', estoque:'Estoque', compras:'Compras', fornecedores:'Fornecedores', vendas:'Vendas',
-  vendedores:'Vendedores', clientes:'Clientes', marketing:'Marketing', financeiro:'Financeiro', nf:'Notas Fiscais', catalogo:'Catálogo', config:'Configurações'
+  vendedores:'Vendedor(es)', clientes:'Clientes', marketing:'Marketing', financeiro:'Financeiro', nf:'Notas Fiscais', catalogo:'Catálogo', config:'Configurações'
 };
 async function showTab(name){
   document.querySelectorAll('.tab-panel').forEach(p=>p.classList.add('hidden'));
@@ -988,7 +988,7 @@ async function renderVendas(){
   if(sales.length===0){
     html += '<div class="empty">Nenhuma venda registrada ainda.</div>';
   } else {
-    html += '<div class="card"><table><tr><th>Data</th><th>Cliente</th><th>Vendedora</th><th>Itens</th><th>Total</th><th>Pagamento</th><th></th></tr>';
+    html += '<div class="card"><table><tr><th>Data</th><th>Cliente</th><th>Vendedor(a)</th><th>Itens</th><th>Total</th><th>Pagamento</th><th></th></tr>';
     sales.forEach(s=>{
       html += '<tr><td>'+fmtDate(s.date)+'</td><td>'+escapeHtml(s.customer||'—')+'</td><td>'+escapeHtml(s.sellers?s.sellers.name:'—')+'</td><td>'+(s.sale_items||[]).length+' item(ns)</td><td>'+fmtMoney(s.total)+'</td><td>'+escapeHtml(s.payment||'—')+'</td>';
       html += '<td class="row-actions">'+(s.invoice_id?'<span class="tag info">Nota gerada</span>':'<button class="btn small outline" onclick="generateInvoiceFromSale(\''+s.id+'\')">Gerar nota</button>')+' <button class="btn small danger" onclick="deleteSale(\''+s.id+'\')">Excluir</button></td></tr>';
@@ -1004,7 +1004,7 @@ async function openSaleForm(){
   let html = '<h3>Nova venda</h3>';
   html += '<div class="form-row"><div class="field"><label>Cliente</label><input id="sa_customer" placeholder="Nome do cliente"></div><div class="field"><label>Data</label><input id="sa_date" type="date" value="'+todayISO()+'"></div></div>';
   html += '<div class="form-row"><div class="field"><label>Forma de pagamento</label><select id="sa_payment"><option>Pix</option><option>Dinheiro</option><option>Cartão de crédito</option><option>Cartão de débito</option><option>Boleto</option></select></div>';
-  html += '<div class="field"><label>Vendedora (opcional)</label><select id="sa_seller"><option value="">— sem vendedora —</option>'+sellers.filter(sl=>sl.active!==false).map(sl=>'<option value="'+sl.id+'">'+escapeHtml(sl.name)+'</option>').join('')+'</select></div></div>';
+  html += '<div class="field"><label>Vendedor(a) (opcional)</label><select id="sa_seller"><option value="">— sem vendedor(a) —</option>'+sellers.filter(sl=>sl.active!==false).map(sl=>'<option value="'+sl.id+'">'+escapeHtml(sl.name)+'</option>').join('')+'</select></div></div>';
   html += '<div id="sa_items_area"></div>';
   html += '<div class="form-row" style="align-items:end;">';
   html += '<div class="field"><label>Produto</label><select id="sa_prod" onchange="fillSalePrice()">'+products.map(p=>'<option value="'+p.id+'">'+escapeHtml(p.name)+'</option>').join('')+'</select></div>';
@@ -1107,7 +1107,7 @@ async function getSellersLite(force){
 }
 function round2(n){ return Math.round((Number(n)||0)*100)/100; }
 function jsStr(s){ return String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
-const MIGRACAO_FASE2_AVISO = '<div class="note">⚠️ As tabelas de <strong>vendedoras</strong> ainda não existem no seu banco. Abra o Supabase, vá em <strong>SQL Editor &gt; New query</strong>, cole o conteúdo do arquivo <strong>migracao-fase2.sql</strong> e clique em Run. Depois volte aqui e recarregue a página.</div>';
+const MIGRACAO_FASE2_AVISO = '<div class="note">⚠️ As tabelas de <strong>vendedor(es)</strong> ainda não existem no seu banco. Abra o Supabase, vá em <strong>SQL Editor &gt; New query</strong>, cole o conteúdo do arquivo <strong>migracao-fase2.sql</strong> e clique em Run. Depois volte aqui e recarregue a página.</div>';
 
 async function renderVendedores(){
   const el = document.getElementById('tab-vendedores');
@@ -1121,11 +1121,11 @@ async function renderVendedores(){
   const couponsBySeller = {};
   sellerCoupons.forEach(function(c){ (couponsBySeller[c.seller_id] = couponsBySeller[c.seller_id]||[]).push(c.code); });
 
-  let html = '<div class="page-desc">Cadastre as vendedoras e a % de comissão de cada uma. Ao lançar uma venda manual (aba Vendas), escolha a vendedora responsável. Vendas feitas pelo link do catálogo dela (com o cupom) também entram na comissão automaticamente — a comissão total é calculada no fechamento abaixo.</div>';
-  html += '<button class="btn" onclick="openSellerForm()">+ Nova vendedora</button>';
-  html += '<div class="section-title">Vendedoras ('+sellers.length+')</div>';
+  let html = '<div class="page-desc">Cadastre o(a)s vendedor(es) e a % de comissão de cada um(a). Ao lançar uma venda manual (aba Vendas), escolha o(a) vendedor(a) responsável. Vendas feitas pelo link do catálogo dele(a) (com o cupom) também entram na comissão automaticamente — a comissão total é calculada no fechamento abaixo.</div>';
+  html += '<button class="btn" onclick="openSellerForm()">+ Novo(a) vendedor(a)</button>';
+  html += '<div class="section-title">Vendedor(es) ('+sellers.length+')</div>';
   if(sellers.length===0){
-    html += '<div class="empty">Nenhuma vendedora cadastrada ainda.</div>';
+    html += '<div class="empty">Nenhum(a) vendedor(a) cadastrado(a) ainda.</div>';
   } else {
     html += '<div class="card"><table><tr><th>Nome</th><th>Telefone</th><th>Comissão</th><th>Status</th><th>Link do catálogo</th><th></th></tr>';
     sellers.forEach(function(sl){
@@ -1142,7 +1142,7 @@ async function renderVendedores(){
   }
 
   html += '<div class="section-title">💰 Fechamento de comissões</div>';
-  html += '<div class="page-desc">Escolha o mês, calcule quanto cada vendedora vendeu e a comissão dela no período, e marque como pago (lança a despesa correspondente no Financeiro).</div>';
+  html += '<div class="page-desc">Escolha o mês, calcule quanto cada vendedor(a) vendeu e a comissão dele(a) no período, e marque como pago (lança a despesa correspondente no Financeiro).</div>';
   html += '<div class="form-row" style="align-items:end;max-width:360px;">';
   html += '<div class="field"><label>Mês</label><input type="month" id="comm_period" value="'+todayISO().slice(0,7)+'"></div>';
   html += '<button class="btn small" onclick="calcComissoes()">Calcular</button>';
@@ -1166,19 +1166,19 @@ function openSellerForm(id){
   const sellers = sellersLiteCache||[];
   let sl = { id:null, name:'', phone:'', commission_percent:0, active:true };
   if(id){ const found = sellers.find(function(x){ return x.id===id; }); if(found) sl = found; }
-  let html = '<h3>'+(id?'Editar vendedora':'Nova vendedora')+'</h3>';
-  html += '<div class="field" style="margin-bottom:8px;"><label>Nome</label><input id="sl_name" value="'+escapeHtml(sl.name)+'" placeholder="Nome da vendedora"></div>';
+  let html = '<h3>'+(id?'Editar vendedor(a)':'Novo(a) vendedor(a)')+'</h3>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>Nome</label><input id="sl_name" value="'+escapeHtml(sl.name)+'" placeholder="Nome do(a) vendedor(a)"></div>';
   html += '<div class="form-row">';
   html += '<div class="field"><label>Telefone (opcional)</label><input id="sl_phone" value="'+escapeHtml(sl.phone||'')+'" placeholder="Ex: (11) 90000-0000"></div>';
   html += '<div class="field"><label>Comissão (%)</label><input id="sl_commission" type="number" step="0.01" min="0" max="100" value="'+(sl.commission_percent||0)+'"></div>';
   html += '</div>';
-  html += '<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px;"><label class="switch"><input type="checkbox" id="sl_active" '+(sl.active!==false?'checked':'')+'><span class="slider"></span></label> Vendedora ativa</label>';
+  html += '<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px;"><label class="switch"><input type="checkbox" id="sl_active" '+(sl.active!==false?'checked':'')+'><span class="slider"></span></label> Vendedor(a) ativo(a)</label>';
   html += '<div class="row-actions"><button class="btn" id="sl_save_btn" onclick="saveSeller('+(id?"'"+id+"'":'null')+')">Salvar</button><button class="btn outline" onclick="closeModal()">Cancelar</button></div>';
   openModal(html);
 }
 async function saveSeller(id){
   const name = document.getElementById('sl_name').value.trim();
-  if(!name){ toast('Informe o nome da vendedora.'); return; }
+  if(!name){ toast('Informe o nome do(a) vendedor(a).'); return; }
   const payload = {
     name: name,
     phone: document.getElementById('sl_phone').value.trim(),
@@ -1192,10 +1192,10 @@ async function saveSeller(id){
   }
   closeModal();
   await renderVendedores();
-  toast('Vendedora salva.');
+  toast('Vendedor(a) salvo(a).');
 }
 async function deleteSeller(id){
-  if(!confirm('Excluir esta vendedora? (vendas já lançadas continuam no histórico, só perdem o vínculo com ela)')) return;
+  if(!confirm('Excluir este(a) vendedor(a)? (vendas já lançadas continuam no histórico, só perdem o vínculo com ele(a))')) return;
   await q(SUPA.from('sellers').delete().eq('id', id));
   await renderVendedores();
 }
@@ -1245,10 +1245,10 @@ async function calcComissoes(){
   });
   const sellerIds = Object.keys(bySeller);
   if(sellerIds.length===0){
-    el.innerHTML = '<div class="empty">Nenhuma venda com vendedora atribuída nesse período.</div>';
+    el.innerHTML = '<div class="empty">Nenhuma venda com vendedor(a) atribuído(a) nesse período.</div>';
     return;
   }
-  let html = '<div class="card"><table><tr><th>Vendedora</th><th>Total vendido</th><th>Comissão</th><th>Valor</th><th>Status</th><th></th></tr>';
+  let html = '<div class="card"><table><tr><th>Vendedor(a)</th><th>Total vendido</th><th>Comissão</th><th>Valor</th><th>Status</th><th></th></tr>';
   sellerIds.forEach(function(sid){
     const d = bySeller[sid];
     const totalRounded = round2(d.total);
@@ -1401,16 +1401,16 @@ async function renderMarketing(){
     return '<tr><td><strong>'+escapeHtml(c.code)+'</strong></td><td>'+desc+'</td><td>'+escapeHtml(c.influencer_name||'—')+'</td><td>'+(c.expires_at?fmtDate(c.expires_at):'sem validade')+'</td><td>'+(c.active?'<span class="tag ok">Ativo</span>':'<span class="tag warn">Inativo</span>')+'</td><td><button class="btn small danger" onclick="deleteCoupon(\''+c.id+'\')">Excluir</button></td></tr>';
   }
   html += '<div style="font-size:13px;font-weight:700;color:var(--wine-dark);margin:14px 0 4px;">🧑‍💼 Cupons para Vendedor(es) (usados pra rastrear a venda dela no catálogo)</div>';
-  if(sellerCoupons.length===0){ html += '<div class="empty" style="margin-top:6px;">Nenhum cupom vinculado a vendedora ainda. Crie um cupom abaixo e escolha a vendedora dona dele.</div>'; }
+  if(sellerCoupons.length===0){ html += '<div class="empty" style="margin-top:6px;">Nenhum cupom vinculado a vendedor(a) ainda. Crie um cupom abaixo e escolha o(a) vendedor(a) dono(a) dele.</div>'; }
   else {
-    html += '<div class="card" style="margin-top:6px;"><table><tr><th>Código</th><th>Desconto</th><th>Vendedora</th><th>Validade</th><th>Status</th><th></th></tr>';
+    html += '<div class="card" style="margin-top:6px;"><table><tr><th>Código</th><th>Desconto</th><th>Vendedor(a)</th><th>Validade</th><th>Status</th><th></th></tr>';
     sellerCoupons.forEach(c=>{
       const desc = c.discount_type==='percent' ? c.discount_value+'%' : fmtMoney(c.discount_value);
       html += '<tr><td><strong>'+escapeHtml(c.code)+'</strong></td><td>'+desc+'</td><td><span class="tag info">'+escapeHtml(c.sellers?c.sellers.name:'?')+'</span></td><td>'+(c.expires_at?fmtDate(c.expires_at):'sem validade')+'</td><td>'+(c.active?'<span class="tag ok">Ativo</span>':'<span class="tag warn">Inativo</span>')+'</td><td><button class="btn small danger" onclick="deleteCoupon(\''+c.id+'\')">Excluir</button></td></tr>';
     });
     html += '</table></div>';
   }
-  html += '<div style="font-size:13px;font-weight:700;color:var(--wine-dark);margin:16px 0 4px;">🏷️ Cupons Gerais (promoções, influencers, etc — sem vendedora)</div>';
+  html += '<div style="font-size:13px;font-weight:700;color:var(--wine-dark);margin:16px 0 4px;">🏷️ Cupons Gerais (promoções, influencers, etc — sem vendedor(a))</div>';
   if(generalCoupons.length===0){ html += '<div class="empty" style="margin-top:6px;">Nenhum cupom geral cadastrado.</div>'; }
   else {
     html += '<div class="card" style="margin-top:6px;"><table><tr><th>Código</th><th>Desconto</th><th>Influencer</th><th>Validade</th><th>Status</th><th></th></tr>';
@@ -1478,8 +1478,8 @@ async function openCouponForm(){
   const sellerOptions = '<option value="">— nenhuma / cupom geral —</option>'+sellers.filter(sl=>sl.active!==false).map(sl=>'<option value="'+sl.id+'">'+escapeHtml(sl.name)+'</option>').join('');
   let html = '<h3>Novo cupom</h3>';
   html += '<div class="form-row"><div class="field"><label>Código</label><input id="cp_code" placeholder="Ex: INFLU10" style="text-transform:uppercase;"></div><div class="field"><label>Influencer/origem (opcional)</label><input id="cp_influencer"></div></div>';
-  html += '<div class="field" style="margin-bottom:8px;"><label>Vendedora dona do cupom (opcional)</label><select id="cp_seller">'+sellerOptions+'</select></div>';
-  html += '<div class="note">Vinculando a uma vendedora, as vendas do catálogo feitas com esse cupom entram automaticamente na comissão dela.</div>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>Vendedor(a) dono(a) do cupom (opcional)</label><select id="cp_seller">'+sellerOptions+'</select></div>';
+  html += '<div class="note">Vinculando a um(a) vendedor(a), as vendas do catálogo feitas com esse cupom entram automaticamente na comissão dele(a).</div>';
   html += '<div class="form-row"><div class="field"><label>Tipo</label><select id="cp_type"><option value="percent">Percentual (%)</option><option value="fixed">Valor fixo (R$)</option></select></div><div class="field"><label>Valor</label><input id="cp_value" type="number" step="0.01" value="10"></div></div>';
   html += '<div class="form-row"><div class="field"><label>Validade (opcional)</label><input id="cp_expires" type="date"></div><div class="field"><label>Limite de usos (opcional)</label><input id="cp_limit" type="number" min="1"></div></div>';
   html += '<div class="row-actions"><button class="btn" onclick="saveCoupon()">Salvar</button><button class="btn outline" onclick="closeModal()">Cancelar</button></div>';
