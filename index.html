@@ -862,7 +862,10 @@ function pedidoCardHtml(o){
 }
 async function confirmOrderAction(id){
   if(!confirm('Confirmar este pedido como pago? Isso vai baixar o estoque e lançar a receita no financeiro.')) return;
-  await q(SUPA.rpc('confirm_order', { p_order_id: id }));
+  const orderRows = await q(SUPA.from('orders').select('phone,total').eq('id', id));
+  const order = orderRows[0];
+  const saleId = await q(SUPA.rpc('confirm_order', { p_order_id: id }));
+  try{ await applyCashbackRules(order ? order.phone : null, order ? Number(order.total)||0 : 0, saleId); }catch(e){ console.error('Erro ao aplicar regra de cashback:', e); }
   toast('Pedido confirmado. Venda registrada.');
   await renderPedidos();
   refreshPedidosBadge();
@@ -3252,10 +3255,112 @@ const CATALOG_JS = [
 /* ============================================================
    CONFIGURAÇÕES
    ============================================================ */
+/* ============================================================
+   CASHBACK — regras configuráveis, mais de uma pode ficar ativa
+   ============================================================ */
+let cashbackRulesCache = [];
+function cashbackRuleSummary(r){
+  if(r.type==='padrao') return r.percent+'% em toda compra confirmada';
+  if(r.type==='valor_minimo') return r.percent+'% em compras acima de '+fmtMoney(r.min_purchase_value||0);
+  if(r.type==='boas_vindas') return r.percent+'% só na primeira compra do cliente';
+  if(r.type==='validade') return r.percent+'%, expira em '+(r.expiration_days||0)+' dia(s) se não usado';
+  if(r.type==='fidelidade') return r.percent+'% (base) · '+(r.tier2_percent||0)+'% a partir de '+fmtMoney(r.tier2_min_spent||0)+' gastos · '+(r.tier3_percent||0)+'% a partir de '+fmtMoney(r.tier3_min_spent||0)+' gastos';
+  return '';
+}
+async function toggleCashbackRule(id, active){
+  await q(SUPA.from('cashback_rules').update({ active }).eq('id', id));
+  toast(active ? 'Regra ativada.' : 'Regra desativada.');
+}
+function openCashbackRuleForm(id){
+  const r = cashbackRulesCache.find(function(x){ return x.id===id; });
+  if(!r) return;
+  let html = '<h3>Editar regra: '+escapeHtml(r.name)+'</h3>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>Nome de exibição</label><input id="cbr_name" value="'+escapeHtml(r.name)+'"></div>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>Percentual base (%)</label><input id="cbr_percent" type="number" min="0" max="100" step="0.1" value="'+(r.percent||0)+'"></div>';
+  if(r.type==='valor_minimo'){
+    html += '<div class="field" style="margin-bottom:8px;"><label>Valor mínimo da compra (R$)</label><input id="cbr_min" type="number" min="0" step="0.01" value="'+(r.min_purchase_value||0)+'"></div>';
+  }
+  if(r.type==='validade'){
+    html += '<div class="field" style="margin-bottom:8px;"><label>Validade do crédito (dias)</label><input id="cbr_exp" type="number" min="1" value="'+(r.expiration_days||30)+'"></div>';
+  }
+  if(r.type==='fidelidade'){
+    html += '<div class="note">O percentual base acima vale pro nível inicial (Bronze). Configure os próximos níveis:</div>';
+    html += '<div class="form-row">';
+    html += '<div class="field"><label>Gasto mínimo — nível Prata (R$)</label><input id="cbr_t2min" type="number" min="0" step="0.01" value="'+(r.tier2_min_spent||0)+'"></div>';
+    html += '<div class="field"><label>% nível Prata</label><input id="cbr_t2pct" type="number" min="0" max="100" step="0.1" value="'+(r.tier2_percent||0)+'"></div>';
+    html += '</div>';
+    html += '<div class="form-row">';
+    html += '<div class="field"><label>Gasto mínimo — nível Ouro (R$)</label><input id="cbr_t3min" type="number" min="0" step="0.01" value="'+(r.tier3_min_spent||0)+'"></div>';
+    html += '<div class="field"><label>% nível Ouro</label><input id="cbr_t3pct" type="number" min="0" max="100" step="0.1" value="'+(r.tier3_percent||0)+'"></div>';
+    html += '</div>';
+  }
+  html += '<div class="row-actions"><button class="btn" onclick="saveCashbackRule(\''+id+'\')">Salvar</button><button class="btn outline" onclick="closeModal()">Cancelar</button></div>';
+  openModal(html);
+}
+async function saveCashbackRule(id){
+  const r = cashbackRulesCache.find(function(x){ return x.id===id; });
+  if(!r) return;
+  const payload = {
+    name: document.getElementById('cbr_name').value.trim() || r.name,
+    percent: Number(document.getElementById('cbr_percent').value)||0
+  };
+  if(r.type==='valor_minimo'){ payload.min_purchase_value = Number(document.getElementById('cbr_min').value)||0; }
+  if(r.type==='validade'){ payload.expiration_days = Number(document.getElementById('cbr_exp').value)||30; }
+  if(r.type==='fidelidade'){
+    payload.tier2_min_spent = Number(document.getElementById('cbr_t2min').value)||0;
+    payload.tier2_percent = Number(document.getElementById('cbr_t2pct').value)||0;
+    payload.tier3_min_spent = Number(document.getElementById('cbr_t3min').value)||0;
+    payload.tier3_percent = Number(document.getElementById('cbr_t3pct').value)||0;
+  }
+  await q(SUPA.from('cashback_rules').update(payload).eq('id', id));
+  closeModal();
+  await renderConfig();
+  toast('Regra salva.');
+}
+async function applyCashbackRules(phone, orderTotal, saleId){
+  if(!phone) return;
+  const rules = await q(SUPA.from('cashback_rules').select('*').eq('active', true));
+  if(rules.length===0) return;
+  const custRows = await q(SUPA.from('customers').select('id,cashback_balance').eq('phone', phone));
+  if(custRows.length===0) return;
+  const customerId = custRows[0].id;
+
+  const salesRows = await q(SUPA.from('sales').select('total').eq('phone', phone));
+  const isFirstPurchase = salesRows.length<=1;
+  const totalSpent = salesRows.reduce(function(s,r){ return s+(Number(r.total)||0); }, 0);
+
+  let best = null;
+  rules.forEach(function(r){
+    let eligible = true;
+    let percent = Number(r.percent)||0;
+    if(r.type==='valor_minimo'){
+      eligible = orderTotal >= (Number(r.min_purchase_value)||0);
+    } else if(r.type==='boas_vindas'){
+      eligible = isFirstPurchase;
+    } else if(r.type==='fidelidade'){
+      if(r.tier3_min_spent!=null && totalSpent >= Number(r.tier3_min_spent)) percent = Number(r.tier3_percent)||percent;
+      else if(r.tier2_min_spent!=null && totalSpent >= Number(r.tier2_min_spent)) percent = Number(r.tier2_percent)||percent;
+    }
+    if(eligible && (!best || percent > best.percent)){ best = { percent: percent, rule: r }; }
+  });
+  if(!best || best.percent<=0) return;
+
+  const amount = round2(orderTotal * (best.percent/100));
+  if(amount<=0) return;
+
+  let expiresAt = null;
+  if(best.rule.type==='validade' && best.rule.expiration_days){
+    const d = new Date(); d.setDate(d.getDate()+Number(best.rule.expiration_days));
+    expiresAt = d.toISOString();
+  }
+  await q(SUPA.from('cashback_ledger').insert([{ customer_id: customerId, amount: amount, type:'credito', ref_sale_id: saleId||null, rule_name: best.rule.name, expires_at: expiresAt }]));
+  await q(SUPA.from('customers').update({ cashback_balance: round2((Number(custRows[0].cashback_balance)||0) + amount) }).eq('id', customerId));
+}
+
 async function renderConfig(){
   const el = document.getElementById('tab-config');
   el.innerHTML = '<div class="empty">Carregando...</div>';
-  const [s, cats, teamProfiles, sellersForEq] = await Promise.all([getSettings(), getCategories(true), q(SUPA.from('profiles').select('*, sellers(name)').order('created_at')), getSellersLite(true)]);
+  const [s, cats, teamProfiles, sellersForEq, cashbackRules] = await Promise.all([getSettings(), getCategories(true), q(SUPA.from('profiles').select('*, sellers(name)').order('created_at')), getSellersLite(true), q(SUPA.from('cashback_rules').select('*').order('type'))]);
   let html = '<div class="page-desc">Dados da loja usados no catálogo público e nos recibos.</div>';
   html += '<div class="form-block"><h4>Loja</h4>';
   html += '<div class="form-row">';
@@ -3304,10 +3409,16 @@ async function renderConfig(){
   html += '<div class="note">Com isso preenchido, o catálogo mostra um botão "Pagar com cartão" que leva o cliente direto pro checkout do InfinitePay (Pix ou cartão em até 12x).</div>';
   html += '</div>';
 
-  html += '<div class="form-block"><h4>Cashback</h4>';
-  html += '<div class="field" style="margin-bottom:8px;"><label>% de cashback por compra confirmada (0 = desativado)</label><input id="cf_cashback" type="number" min="0" max="100" step="0.1" value="'+(s.cashback_percent||0)+'"></div>';
-  html += '<div class="note">Quando um pedido é confirmado e o telefone do cliente já está cadastrado, esse percentual do valor da compra vira saldo de cashback (aba Clientes).</div>';
-  html += '</div>';
+  cashbackRulesCache = cashbackRules;
+  html += '<div class="section-title">💰 Regras de Cashback</div>';
+  html += '<div class="page-desc">Pode ativar mais de uma ao mesmo tempo. Quando um pedido é confirmado, o sistema aplica a regra ativa mais vantajosa pra aquele cliente naquele momento (não soma as regras). Edite os valores de cada uma antes de ativar.</div>';
+  html += '<div class="card"><table><tr><th>Ativa</th><th>Regra</th><th>Como funciona</th><th></th></tr>';
+  cashbackRules.forEach(r=>{
+    html += '<tr><td><label class="switch"><input type="checkbox" '+(r.active?'checked':'')+' onchange="toggleCashbackRule(\''+r.id+'\', this.checked)"><span class="slider"></span></label></td>';
+    html += '<td>'+escapeHtml(r.name)+'</td><td style="font-size:12.5px;color:var(--muted);">'+cashbackRuleSummary(r)+'</td>';
+    html += '<td><button class="btn small outline" onclick="openCashbackRuleForm(\''+r.id+'\')">Editar</button></td></tr>';
+  });
+  html += '</table></div>';
 
   html += '<div class="form-block"><h4>Parcelamento (padrão do catálogo)</h4>';
   html += '<div class="note">Aparece embaixo do preço de cada produto. Ex: com 3 sem juros e máximo 10, mostra "3x sem juros" e "até 10x com juros". Um produto pode ter uma regra própria, personalizada na tela de Estoque — nesse caso ela vale no lugar desta.</div>';
@@ -3392,7 +3503,6 @@ async function saveConfig(){
     sinal_percent: Math.min(100, Math.max(1, Number(document.getElementById('cf_sinal').value)||100)),
     payment_note: document.getElementById('cf_paynote').value.trim(),
     infinitepay_handle: document.getElementById('cf_infinitetag').value.trim().replace(/^\$/,''),
-    cashback_percent: Number(document.getElementById('cf_cashback').value)||0,
     attendant1_name: document.getElementById('cf_at1_name').value.trim(),
     attendant1_phone: document.getElementById('cf_at1_phone').value.trim(),
     attendant2_name: document.getElementById('cf_at2_name').value.trim(),
