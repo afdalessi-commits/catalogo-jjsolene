@@ -31,6 +31,8 @@ h1,h2,h3{font-family:"Playfair Display",serif;margin:0;}
 .pbody{padding:12px 14px 14px;display:flex;flex-direction:column;gap:6px;flex:1;}
 .pname{font-weight:700;font-size:14.5px;color:#4a1523;}
 .pdesc{font-size:12px;color:#8a7568;min-height:14px;}
+.pcolor{display:flex;align-items:center;gap:6px;font-size:11.5px;color:#6b5849;margin:2px 0;}
+.pcolor-dot{width:13px;height:13px;border-radius:50%;border:1.3px solid rgba(0,0,0,0.15);flex:none;background:#fff;}
 .pprice{font-weight:700;color:#6b1f33;font-size:16px;}
 .psizes{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0;}
 .psizes button{border:1.5px solid #e8dcc8;background:#fff;border-radius:6px;padding:4px 9px;font-size:12px;cursor:pointer;font-weight:600;}
@@ -664,6 +666,13 @@ function buildCard(p){
   var body = document.createElement("div"); body.className="pbody";
   var name = document.createElement("div"); name.className="pname"; name.textContent = p.name;
   body.appendChild(name);
+  if(p.color){
+    var colorRow = document.createElement("div"); colorRow.className="pcolor";
+    var dot = document.createElement("span"); dot.className="pcolor-dot"; if(p.color_hex){ dot.style.background = p.color_hex; }
+    var colorLabel = document.createElement("span"); colorLabel.textContent = p.color;
+    colorRow.appendChild(dot); colorRow.appendChild(colorLabel);
+    body.appendChild(colorRow);
+  }
   if(p.description){ var d=document.createElement("div"); d.className="pdesc"; d.textContent=p.description; body.appendChild(d); }
   var priceRow = document.createElement("div"); priceRow.className="price-row";
   var priceCol = document.createElement("div"); priceCol.className="price-col";
