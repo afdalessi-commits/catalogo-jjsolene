@@ -216,17 +216,25 @@ function toggleFavorite(id){
   if(CATALOG.activeTab==="favoritos"){ buildViewFavoritos(); }
 }
 function money(n){ return "R$ " + (Number(n)||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2}); }
-function installmentText(p, settings){
+function installmentLines(p, settings){
   var useOverride = p.installments_override;
   var max = useOverride ? (Number(p.installments_max)||1) : (Number(settings.installments_max)||3);
-  var free = useOverride ? (p.installments_interest_free!==false) : (settings.installments_interest_free!==false);
+  var freeMax = useOverride ? (Number(p.installments_free_max)||0) : (Number(settings.installments_free_max)||0);
   var rate = useOverride ? (Number(p.installments_interest_rate)||0) : (Number(settings.installments_interest_rate)||0);
-  if(max<=1) return null;
-  if(free || rate<=0){
-    return max+"x de "+money(p.sale_price/max)+" sem juros";
+  if(freeMax>max) freeMax = max;
+  if(max<=1) return [];
+  var lines = [];
+  if(freeMax>=2){
+    lines.push(freeMax+"x de "+money(p.sale_price/freeMax)+" sem juros");
   }
-  var totalWithInterest = p.sale_price * (1 + (rate/100)*max);
-  return max+"x de "+money(totalWithInterest/max)+" (total "+money(totalWithInterest)+")";
+  if(max>freeMax && rate>0){
+    var totalWithInterest = p.sale_price * (1 + (rate/100)*max);
+    var prefix = lines.length ? "ou em até " : "em até ";
+    lines.push(prefix+max+"x de "+money(totalWithInterest/max)+" com juros");
+  } else if(max>freeMax && rate<=0 && freeMax<2){
+    lines.push(max+"x de "+money(p.sale_price/max)+" sem juros");
+  }
+  return lines;
 }
 function esc(s){ var d=document.createElement("div"); d.textContent = (s==null?"":s); return d.innerHTML; }
 var CAT_ICONS = {
@@ -662,11 +670,10 @@ function buildCard(p){
   var price = document.createElement("div"); price.className="pprice"; price.textContent = money(p.sale_price);
   priceCol.appendChild(price);
   if(p.sale_price >= 30){
-    var instTxt = installmentText(p, CATALOG.settings||{});
-    if(instTxt){
-      var inst = document.createElement("div"); inst.className="installment"; inst.textContent = instTxt;
+    installmentLines(p, CATALOG.settings||{}).forEach(function(line){
+      var inst = document.createElement("div"); inst.className="installment"; inst.textContent = line;
       priceCol.appendChild(inst);
-    }
+    });
   }
   priceRow.appendChild(priceCol);
   if(CATALOG.settings.whatsapp){
