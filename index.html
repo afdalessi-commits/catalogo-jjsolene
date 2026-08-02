@@ -171,6 +171,7 @@
     <div class="nav-item" data-tab="agenda"><span class="nav-icon">🗓️</span> Agenda</div>
     <div class="nav-item" data-tab="pedidos"><span class="nav-icon">🔔</span> Pedidos <span class="nav-badge hidden" id="pedidosBadge">0</span></div>
     <div class="nav-item" data-tab="estoque"><span class="nav-icon">👗</span> Estoque</div>
+    <div class="nav-item" data-tab="inventario"><span class="nav-icon">📋</span> Inventário</div>
     <div class="nav-item" data-tab="compras"><span class="nav-icon">📦</span> Compras</div>
     <div class="nav-item" data-tab="fornecedores"><span class="nav-icon">🚚</span> Fornecedores</div>
     <div class="nav-item" data-tab="vendas"><span class="nav-icon">🛍️</span> Vendas</div>
@@ -198,6 +199,7 @@
     <div id="tab-agenda" class="tab-panel hidden"></div>
     <div id="tab-pedidos" class="tab-panel hidden"></div>
     <div id="tab-estoque" class="tab-panel hidden"></div>
+    <div id="tab-inventario" class="tab-panel hidden"></div>
     <div id="tab-compras" class="tab-panel hidden"></div>
     <div id="tab-fornecedores" class="tab-panel hidden"></div>
     <div id="tab-vendas" class="tab-panel hidden"></div>
@@ -390,7 +392,7 @@ async function refreshPedidosBadge(){
    NAVEGAÇÃO
    ============================================================ */
 const TAB_TITLES = {
-  dashboard:'Dashboard', agenda:'Agenda', pedidos:'Pedidos', estoque:'Estoque', compras:'Compras', fornecedores:'Fornecedores', vendas:'Vendas',
+  dashboard:'Dashboard', agenda:'Agenda', pedidos:'Pedidos', estoque:'Estoque', inventario:'Inventário', compras:'Compras', fornecedores:'Fornecedores', vendas:'Vendas',
   vendedores:'Vendedor(es)', clientes:'Clientes', marketing:'Marketing', financeiro:'Financeiro', nf:'Notas Fiscais', catalogo:'Catálogo', config:'Configurações'
 };
 async function showTab(name){
@@ -408,6 +410,7 @@ async function renderTab(name){
   if(name==='agenda') await renderAgenda();
   if(name==='pedidos') await renderPedidos();
   if(name==='estoque') await renderEstoque();
+  if(name==='inventario') await renderInventario();
   if(name==='compras') await renderCompras();
   if(name==='fornecedores') await renderFornecedores();
   if(name==='vendas') await renderVendas();
@@ -1128,6 +1131,192 @@ async function deleteProduct(id){
   await q(SUPA.from('products').delete().eq('id', id));
   await renderEstoque();
   toast('Produto excluído.');
+}
+
+/* ============================================================
+   INVENTÁRIO (contagem com código de barras)
+   ============================================================ */
+let currentInventorySession = null;
+let currentInventorySessionItems = [];
+
+async function loadInventorySessionItems(sessionId){
+  const rows = await q(SUPA.from('inventory_session_items').select('*, products(name)').eq('session_id', sessionId).order('size'));
+  return rows.map(function(r){ return Object.assign({}, r, { product_name: r.products ? r.products.name : '?' }); });
+}
+
+async function renderInventario(){
+  const el = document.getElementById('tab-inventario');
+  el.innerHTML = '<div class="empty">Carregando...</div>';
+  const sessions = await q(SUPA.from('inventory_sessions').select('*, inventory_session_items(counted_qty,system_stock)').order('created_at',{ascending:false}));
+  let html = '<div class="page-desc">Ferramenta de inventário: inicie uma contagem Total ou Parcial, bipe as peças com o leitor de código de barras e, no final, veja o relatório comparando sistema x contado — com opção de corrigir o estoque direto ali.</div>';
+  html += '<button class="btn" onclick="openInventoryStartForm()">+ Nova contagem de inventário</button>';
+  const ongoing = sessions.find(s=>s.status==='em_andamento');
+  if(ongoing){
+    html += '<div class="note" style="margin-top:10px;">Existe uma contagem em andamento ('+(ongoing.type==='total'?'Total':'Parcial')+', iniciada em '+fmtDate(ongoing.created_at)+'). <button class="btn small" onclick="openInventoryScanScreen(\''+ongoing.id+'\')">Continuar contagem</button></div>';
+  }
+  html += '<div class="section-title">Histórico de contagens ('+sessions.length+')</div>';
+  if(sessions.length===0){
+    html += '<div class="empty">Nenhuma contagem realizada ainda.</div>';
+  } else {
+    html += '<div class="card"><table><tr><th>Data</th><th>Tipo</th><th>Status</th><th>Itens</th><th></th></tr>';
+    sessions.forEach(s=>{
+      const items = s.inventory_session_items||[];
+      const withDiff = items.filter(it=> Number(it.counted_qty)!==Number(it.system_stock)).length;
+      html += '<tr><td>'+fmtDate(s.created_at)+'</td><td>'+(s.type==='total'?'Total':'Parcial')+'</td><td>'+(s.status==='concluido'?'<span class="tag ok">Concluída</span>':'<span class="tag warn">Em andamento</span>')+'</td><td>'+items.length+' ('+withDiff+' c/ diferença)</td>';
+      html += '<td class="row-actions">'+(s.status==='concluido' ? '<button class="btn small outline" onclick="openInventoryReport(\''+s.id+'\')">Ver relatório</button>' : '<button class="btn small" onclick="openInventoryScanScreen(\''+s.id+'\')">Continuar</button>')+' <button class="btn small danger" onclick="deleteInventorySession(\''+s.id+'\')">Excluir</button></td></tr>';
+    });
+    html += '</table></div>';
+  }
+  el.innerHTML = html;
+}
+
+async function deleteInventorySession(id){
+  if(!confirm('Excluir esta contagem de inventário? Essa ação não corrige nem reverte o estoque, só remove o registro da contagem.')) return;
+  await q(SUPA.from('inventory_sessions').delete().eq('id', id));
+  await renderInventario();
+}
+
+async function openInventoryStartForm(){
+  const cats = await getCategories();
+  let html = '<h3>Nova contagem de inventário</h3>';
+  html += '<div class="field" style="margin-bottom:10px;"><label>Tipo de contagem</label><select id="inv_type" onchange="document.getElementById(\'inv_cats_area\').classList.toggle(\'hidden\', this.value!==\'parcial\')"><option value="total">Total (todos os produtos)</option><option value="parcial">Parcial (escolher categorias)</option></select></div>';
+  html += '<div id="inv_cats_area" class="hidden field" style="margin-bottom:10px;"><label>Categorias incluídas na contagem</label>';
+  html += cats.map(c=>'<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:4px 0;"><input type="checkbox" class="inv_cat_cb" value="'+c.id+'"> '+escapeHtml(c.icon+' '+c.name)+'</label>').join('');
+  html += '</div>';
+  html += '<div class="row-actions"><button class="btn" onclick="startInventorySession()">Iniciar contagem</button><button class="btn outline" onclick="closeModal()">Cancelar</button></div>';
+  openModal(html);
+}
+
+async function startInventorySession(){
+  const type = document.getElementById('inv_type').value;
+  let catIds = null;
+  if(type==='parcial'){
+    catIds = Array.from(document.querySelectorAll('.inv_cat_cb:checked')).map(cb=>cb.value);
+    if(catIds.length===0){ toast('Selecione ao menos uma categoria para a contagem parcial.'); return; }
+  }
+  let query = SUPA.from('products').select('id,name,category_id,product_sizes(size,stock)');
+  if(type==='parcial') query = query.in('category_id', catIds);
+  const products = await q(query);
+  if(products.length===0){ toast('Nenhum produto encontrado para essa seleção.'); return; }
+  const itemsPayload = [];
+  products.forEach(p=>{
+    (p.product_sizes||[]).forEach(sz=>{
+      itemsPayload.push({ product_id: p.id, size: sz.size, system_stock: Number(sz.stock)||0 });
+    });
+  });
+  if(itemsPayload.length===0){ toast('Os produtos selecionados não têm tamanhos cadastrados.'); return; }
+  const inserted = await q(SUPA.from('inventory_sessions').insert([{ type: type, category_ids: catIds, created_by: currentUser.id }]).select());
+  const session = inserted[0];
+  await q(SUPA.from('inventory_session_items').insert(itemsPayload.map(it=> Object.assign({ session_id: session.id }, it))));
+  closeModal();
+  await openInventoryScanScreen(session.id);
+}
+
+async function openInventoryScanScreen(sessionId){
+  const el = document.getElementById('tab-inventario');
+  el.innerHTML = '<div class="empty">Carregando...</div>';
+  const sessRows = await q(SUPA.from('inventory_sessions').select('*').eq('id', sessionId));
+  currentInventorySession = sessRows[0];
+  currentInventorySessionItems = await loadInventorySessionItems(sessionId);
+  await getProductsLite(true);
+  let html = '<div class="page-desc">Contagem '+(currentInventorySession.type==='total'?'Total':'Parcial')+' — iniciada em '+fmtDate(currentInventorySession.created_at)+'. Bipe as peças uma a uma; cada leitura soma 1 na contagem daquele tamanho. Peças sem código de barras cadastrado não podem ser bipadas — vão aparecer como "não bipadas" no relatório.</div>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>📷 Bipar código de barras</label><input id="inv_barcode" placeholder="Clique aqui e escaneie..." onkeydown="if(event.key===\'Enter\'){ event.preventDefault(); scanBarcodeInventory(); }"></div>';
+  html += '<div class="row-actions" style="margin-bottom:12px;"><button class="btn" onclick="finishInventorySession()">Finalizar contagem e ver relatório</button> <button class="btn outline" onclick="renderInventario()">← Voltar (continuar depois)</button></div>';
+  html += '<div class="section-title">Itens já contados</div>';
+  html += '<div id="inv_tally_area"></div>';
+  el.innerHTML = html;
+  document.getElementById('inv_barcode').focus();
+  renderInventoryScanTally();
+}
+
+function renderInventoryScanTally(){
+  const area = document.getElementById('inv_tally_area');
+  const counted = currentInventorySessionItems.filter(it=> Number(it.counted_qty)>0).sort((a,b)=> a.product_name.localeCompare(b.product_name));
+  if(counted.length===0){ area.innerHTML = '<div class="empty">Nenhuma peça bipada ainda.</div>'; return; }
+  let html = '<div class="card"><table><tr><th>Produto</th><th>Tamanho</th><th>Contado</th></tr>';
+  counted.forEach(it=>{ html += '<tr><td>'+escapeHtml(it.product_name)+'</td><td>'+escapeHtml(it.size)+'</td><td>'+it.counted_qty+'</td></tr>'; });
+  html += '</table></div>';
+  area.innerHTML = html;
+}
+
+async function scanBarcodeInventory(){
+  const input = document.getElementById('inv_barcode');
+  const code = input.value.trim();
+  input.value = '';
+  if(!code) return;
+  const found = findProductByBarcode(code, productsLiteCache||[]);
+  if(!found){ toast('Código não encontrado: '+code); input.focus(); return; }
+  const item = currentInventorySessionItems.find(it=> it.product_id===found.product.id && it.size===found.size);
+  if(!item){ toast('Esse produto/tamanho não faz parte desta contagem.'); input.focus(); return; }
+  item.counted_qty = (Number(item.counted_qty)||0) + 1;
+  await q(SUPA.from('inventory_session_items').update({ counted_qty: item.counted_qty }).eq('id', item.id));
+  renderInventoryScanTally();
+  toast('+1 '+found.product.name+' ('+found.size+') — total contado: '+item.counted_qty);
+  input.focus();
+}
+
+async function finishInventorySession(){
+  if(!confirm('Finalizar esta contagem? Você ainda vai poder corrigir o estoque no relatório final.')) return;
+  await q(SUPA.from('inventory_sessions').update({ status:'concluido', finished_at: new Date().toISOString() }).eq('id', currentInventorySession.id));
+  await openInventoryReport(currentInventorySession.id);
+}
+
+async function openInventoryReport(sessionId){
+  const el = document.getElementById('tab-inventario');
+  el.innerHTML = '<div class="empty">Carregando...</div>';
+  const sessRows = await q(SUPA.from('inventory_sessions').select('*').eq('id', sessionId));
+  const sess = sessRows[0];
+  const items = await loadInventorySessionItems(sessionId);
+  window._invReportItems = items;
+  window._invReportSessionId = sessionId;
+  const notScanned = items.filter(it=> Number(it.counted_qty)===0);
+  const withDiff = items.filter(it=> Number(it.counted_qty)>0 && Number(it.counted_qty)!==Number(it.system_stock));
+  const ok = items.filter(it=> Number(it.counted_qty)===Number(it.system_stock) && Number(it.counted_qty)>0);
+  function rowHtml(it){
+    const diff = Number(it.counted_qty) - Number(it.system_stock);
+    const diffTag = it.corrected ? '<span class="tag ok">Corrigido</span>' : (diff===0 ? '<span class="tag ok">OK</span>' : '<span class="tag warn">'+(diff>0?'+':'')+diff+'</span>');
+    const action = (!it.corrected && diff!==0) ? '<button class="btn small" onclick="correctInventoryItemStock(\''+it.id+'\')">Corrigir estoque</button>' : '';
+    return '<tr><td>'+escapeHtml(it.product_name)+'</td><td>'+escapeHtml(it.size)+'</td><td>'+it.system_stock+'</td><td>'+it.counted_qty+'</td><td>'+diffTag+'</td><td>'+action+'</td></tr>';
+  }
+  let html = '<div class="page-desc">Relatório da contagem '+(sess.type==='total'?'Total':'Parcial')+' — '+fmtDate(sess.created_at)+'. Sistema x contado, com opção de corrigir o estoque direto aqui.</div>';
+  html += '<div class="row-actions" style="margin-bottom:12px;">';
+  if(withDiff.length+notScanned.filter(it=>!it.corrected).length>0){ html += '<button class="btn" onclick="correctAllInventoryItems()">Corrigir todas as diferenças</button>'; }
+  html += ' <button class="btn outline" onclick="renderInventario()">← Voltar ao Inventário</button></div>';
+  html += '<div class="section-title">Não bipadas ('+notScanned.length+')</div>';
+  if(notScanned.length===0){ html += '<div class="empty">Nenhuma — tudo foi bipado.</div>'; }
+  else { html += '<div class="card"><table><tr><th>Produto</th><th>Tamanho</th><th>Sistema</th><th>Contado</th><th>Diferença</th><th></th></tr>'+notScanned.map(rowHtml).join('')+'</table></div>'; }
+  html += '<div class="section-title">Com diferença ('+withDiff.length+')</div>';
+  if(withDiff.length===0){ html += '<div class="empty">Nenhuma.</div>'; }
+  else { html += '<div class="card"><table><tr><th>Produto</th><th>Tamanho</th><th>Sistema</th><th>Contado</th><th>Diferença</th><th></th></tr>'+withDiff.map(rowHtml).join('')+'</table></div>'; }
+  html += '<div class="section-title">Conferido, sem diferença ('+ok.length+')</div>';
+  if(ok.length===0){ html += '<div class="empty">Nenhuma.</div>'; }
+  else { html += '<div class="card"><table><tr><th>Produto</th><th>Tamanho</th><th>Sistema</th><th>Contado</th></tr>'+ok.map(it=>'<tr><td>'+escapeHtml(it.product_name)+'</td><td>'+escapeHtml(it.size)+'</td><td>'+it.system_stock+'</td><td>'+it.counted_qty+'</td></tr>').join('')+'</table></div>'; }
+  el.innerHTML = html;
+}
+
+async function correctInventoryItemStock(itemId){
+  const it = (window._invReportItems||[]).find(x=>x.id===itemId);
+  if(!it || it.corrected) return;
+  const delta = Number(it.counted_qty) - Number(it.system_stock);
+  await q(SUPA.rpc('adjust_stock', { p_product_id: it.product_id, p_size: it.size, p_delta: delta }));
+  await q(SUPA.from('inventory_session_items').update({ corrected:true }).eq('id', itemId));
+  productsLiteCache = null;
+  toast('Estoque corrigido: '+it.product_name+' ('+it.size+') → '+it.counted_qty);
+  await openInventoryReport(window._invReportSessionId);
+}
+
+async function correctAllInventoryItems(){
+  const pending = (window._invReportItems||[]).filter(it=> !it.corrected && Number(it.counted_qty)!==Number(it.system_stock));
+  if(pending.length===0) return;
+  if(!confirm('Corrigir o estoque de '+pending.length+' item(ns) de uma vez, ajustando para a quantidade contada?')) return;
+  for(const it of pending){
+    const delta = Number(it.counted_qty) - Number(it.system_stock);
+    await q(SUPA.rpc('adjust_stock', { p_product_id: it.product_id, p_size: it.size, p_delta: delta }));
+    await q(SUPA.from('inventory_session_items').update({ corrected:true }).eq('id', it.id));
+  }
+  productsLiteCache = null;
+  toast('Estoque corrigido em '+pending.length+' item(ns).');
+  await openInventoryReport(window._invReportSessionId);
 }
 
 /* ============================================================
