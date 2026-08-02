@@ -478,7 +478,7 @@ async function renderDashboard(){
     revByCat[catId] = (revByCat[catId]||0) + (Number(si.qty)||0)*(Number(si.price)||0);
   });
   const topCategories = Object.keys(revByCat).map(id=>({ name: catNameById[id]||'—', total: revByCat[id] }))
-    .sort((a,b)=>b.total-a.total).slice(0,10);
+    .sort((a,b)=>b.total-a.total).slice(0,5);
 
   let totalCusto = 0, totalVenda = 0;
   const baixoEstoque = [];
@@ -581,7 +581,7 @@ function renderDashboardHTML(){
   }
   html += '</div>';
   html += '<div>';
-  html += '<div class="section-title">📊 Top categorias</div>';
+  html += '<div class="section-title">📊 Top 5 categorias</div>';
   if(topCategories.length===0){
     html += '<div class="empty">Nenhuma venda registrada ainda.</div>';
   } else {
