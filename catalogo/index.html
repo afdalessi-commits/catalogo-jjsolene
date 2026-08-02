@@ -919,7 +919,7 @@ async function checkout(){
   var phone = (document.getElementById("chk_phone").value||"").trim();
   var source = (document.getElementById("chk_source").value||"").trim();
   if(!name || !phone){ alert("Preencha seu nome e telefone para continuar."); return; }
-  if(!source){ alert("Conta pra gente como você conheceu a loja antes de continuar."); return; }
+  if(!source){ alert("Conta pra gente como você conheceu a JJ Solene antes de continuar."); return; }
   var btn = document.getElementById("checkoutBtn");
   btn.disabled = true; btn.textContent = "Enviando pedido...";
   var orderId = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())+"-"+Math.random().toString(36).slice(2));
@@ -951,7 +951,7 @@ async function checkoutCard(){
   var phone = (document.getElementById("chk_phone").value||"").trim();
   var source = (document.getElementById("chk_source").value||"").trim();
   if(!name || !phone){ alert("Preencha seu nome e telefone para continuar."); return; }
-  if(!source){ alert("Conta pra gente como você conheceu a loja antes de continuar."); return; }
+  if(!source){ alert("Conta pra gente como você conheceu a JJ Solene antes de continuar."); return; }
   var handle = CATALOG.settings.infinitepay_handle;
   if(!handle){ alert("Pagamento por cartão ainda não configurado pela loja."); return; }
   var btn = document.getElementById("checkoutCardBtn");
