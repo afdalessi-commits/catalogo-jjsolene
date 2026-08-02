@@ -62,7 +62,8 @@
   .grid{display:grid;gap:16px;}
   .grid-4{grid-template-columns:repeat(4,1fr);}
   .grid-3{grid-template-columns:repeat(3,1fr);}
-  @media(max-width:1100px){.grid-4{grid-template-columns:repeat(2,1fr);}.grid-3{grid-template-columns:repeat(2,1fr);}}
+  .grid-2{grid-template-columns:repeat(2,1fr);}
+  @media(max-width:1100px){.grid-4{grid-template-columns:repeat(2,1fr);}.grid-3{grid-template-columns:repeat(2,1fr);}.grid-2{grid-template-columns:1fr;}}
   .kpi{background:linear-gradient(135deg,var(--wine),var(--wine-dark));color:#fff;border-radius:14px;padding:18px 20px;box-shadow:0 8px 20px rgba(107,31,51,0.25);}
   .kpi .label{font-size:11.5px;letter-spacing:0.8px;text-transform:uppercase;opacity:0.8;}
   .kpi .value{font-family:'Playfair Display',serif;font-size:24px;font-weight:700;margin-top:6px;}
@@ -130,6 +131,7 @@
     .page-title{font-size:20px;}
     .form-row{grid-template-columns:1fr;}
     .grid-3{grid-template-columns:1fr;}
+    .grid-2{grid-template-columns:1fr;}
     .items-editor .item-line{grid-template-columns:1fr 1fr;font-size:12px;row-gap:4px;}
     .auth-card{padding:26px 22px;}
   }
@@ -443,10 +445,40 @@ async function renderDashboard(){
     q(SUPA.from('orders').select('id,customer,total,date').eq('status','pendente').order('date',{ascending:false}))
   ]);
   const monthStart = todayISO().slice(0,7)+'-01';
-  const [salesMonth, financeAll] = await Promise.all([
+  const currentMonth = Number(todayISO().slice(5,7));
+  const [salesMonth, financeAll, birthdayCustomers, allSales, allSaleItems, allCats] = await Promise.all([
     q(SUPA.from('sales').select('total').gte('date', monthStart)),
-    q(SUPA.from('finance').select('type,amount,status,date,description').order('date',{ascending:false}))
+    q(SUPA.from('finance').select('type,amount,status,date,description').order('date',{ascending:false})),
+    q(SUPA.from('customers').select('id,name,phone,birth_day,birth_month').eq('birth_month', currentMonth).order('birth_day')),
+    q(SUPA.from('sales').select('customer,phone,total')),
+    q(SUPA.from('sale_items').select('qty,price,products(category_id)')),
+    getCategories(true)
   ]);
+
+  const normPhone = s => (s||'').replace(/\D/g,'');
+  const normName = s => (s||'').trim().toLowerCase();
+  const spendByPhone = {}, spendByName = {};
+  allSales.forEach(s=>{
+    const amt = Number(s.total)||0;
+    const ph = normPhone(s.phone);
+    if(ph){ spendByPhone[ph] = (spendByPhone[ph]||0) + amt; }
+    else { const nm = normName(s.customer); if(nm) spendByName[nm] = (spendByName[nm]||0) + amt; }
+  });
+  const topCustomersR = await q(SUPA.from('customers').select('id,name,phone'));
+  const topCustomers = topCustomersR.map(c=>{
+    const total = (spendByPhone[normPhone(c.phone)]||0) + (spendByName[normName(c.name)]||0);
+    return { name: c.name, total };
+  }).filter(c=>c.total>0).sort((a,b)=>b.total-a.total).slice(0,10);
+
+  const catNameById = {}; allCats.forEach(c=>{ catNameById[c.id]=c.name; });
+  const revByCat = {};
+  allSaleItems.forEach(si=>{
+    const catId = si.products ? si.products.category_id : null;
+    if(!catId) return;
+    revByCat[catId] = (revByCat[catId]||0) + (Number(si.qty)||0)*(Number(si.price)||0);
+  });
+  const topCategories = Object.keys(revByCat).map(id=>({ name: catNameById[id]||'—', total: revByCat[id] }))
+    .sort((a,b)=>b.total-a.total).slice(0,10);
 
   let totalCusto = 0, totalVenda = 0;
   const baixoEstoque = [];
@@ -467,7 +499,7 @@ async function renderDashboard(){
 
   dashboardCache = {
     settings, pendentesOrders, salesMonth, baixoEstoque, pendentesFinance,
-    totalCusto, totalVenda, totalVendasMes, saldo
+    totalCusto, totalVenda, totalVendasMes, saldo, birthdayCustomers, topCustomers, topCategories
   };
   renderDashboardHTML();
 }
@@ -480,7 +512,7 @@ function dMoney(v){ return dashValuesHidden ? 'R$ ••••••' : fmtMoney
 function renderDashboardHTML(){
   const el = document.getElementById('tab-dashboard');
   if(!dashboardCache || !el) return;
-  const { settings, pendentesOrders, salesMonth, baixoEstoque, pendentesFinance, totalCusto, totalVenda, totalVendasMes, saldo } = dashboardCache;
+  const { settings, pendentesOrders, salesMonth, baixoEstoque, pendentesFinance, totalCusto, totalVenda, totalVendasMes, saldo, birthdayCustomers, topCustomers, topCategories } = dashboardCache;
 
   let html = '<div style="display:flex;justify-content:flex-end;margin-bottom:10px;">';
   html += '<button class="btn small outline" onclick="toggleDashboardValues()">'+(dashValuesHidden ? '👁️ Mostrar valores' : '🙈 Ocultar valores')+'</button>';
@@ -523,6 +555,44 @@ function renderDashboardHTML(){
     });
     html += '</table></div>';
   }
+
+  html += '<div class="section-title">🎂 Aniversariantes do mês</div>';
+  if(birthdayCustomers.length===0){
+    html += '<div class="empty">Nenhum cliente faz aniversário este mês.</div>';
+  } else {
+    html += '<div class="card"><table><tr><th>Dia</th><th>Nome</th><th>Telefone</th></tr>';
+    birthdayCustomers.forEach(c=>{
+      html += '<tr><td>'+String(c.birth_day).padStart(2,'0')+'</td><td>'+escapeHtml(c.name)+'</td><td>'+escapeHtml(c.phone||'—')+'</td></tr>';
+    });
+    html += '</table></div>';
+  }
+
+  html += '<div class="grid grid-2" style="align-items:start;">';
+  html += '<div>';
+  html += '<div class="section-title">🏆 Top 10 clientes</div>';
+  if(topCustomers.length===0){
+    html += '<div class="empty">Nenhuma venda com cliente identificado ainda.</div>';
+  } else {
+    html += '<div class="card"><table><tr><th>Cliente</th><th>Total comprado</th></tr>';
+    topCustomers.forEach(c=>{
+      html += '<tr><td>'+escapeHtml(c.name)+'</td><td>'+dMoney(c.total)+'</td></tr>';
+    });
+    html += '</table></div>';
+  }
+  html += '</div>';
+  html += '<div>';
+  html += '<div class="section-title">📊 Top categorias</div>';
+  if(topCategories.length===0){
+    html += '<div class="empty">Nenhuma venda registrada ainda.</div>';
+  } else {
+    html += '<div class="card"><table><tr><th>Categoria</th><th>Total vendido</th></tr>';
+    topCategories.forEach(c=>{
+      html += '<tr><td>'+escapeHtml(c.name)+'</td><td>'+dMoney(c.total)+'</td></tr>';
+    });
+    html += '</table></div>';
+  }
+  html += '</div>';
+  html += '</div>';
 
   html += '<div class="section-title">🌐 Catálogo público</div>';
   html += '<div class="card">'+
@@ -1394,8 +1464,8 @@ function openCustomerForm(id){
   html += '<div class="field"><label>E-mail (opcional)</label><input id="cu_email" value="'+escapeHtml(c.email||'')+'" placeholder="Opcional"></div>';
   html += '</div>';
   html += '<div class="form-row">';
-  html += '<div class="field"><label>Dia de nascimento (opcional)</label><input id="cu_bday" type="number" min="1" max="31" value="'+(c.birth_day||'')+'"></div>';
-  html += '<div class="field"><label>Mês de nascimento (opcional)</label><input id="cu_bmonth" type="number" min="1" max="12" value="'+(c.birth_month||'')+'"></div>';
+  html += '<div class="field"><label>Dia de nascimento</label><input id="cu_bday" type="number" min="1" max="31" value="'+(c.birth_day||'')+'"></div>';
+  html += '<div class="field"><label>Mês de nascimento</label><input id="cu_bmonth" type="number" min="1" max="12" value="'+(c.birth_month||'')+'"></div>';
   html += '</div>';
   html += '<div class="field" style="margin-bottom:8px;"><label>CPF (opcional)</label><input id="cu_cpf" value="'+escapeHtml(c.cpf||'')+'"></div>';
   html += '<div class="row-actions"><button class="btn" id="cu_save_btn" onclick="saveCustomer('+(id?"'"+id+"'":'null')+')">Salvar</button><button class="btn outline" onclick="closeModal()">Cancelar</button></div>';
@@ -1404,12 +1474,15 @@ function openCustomerForm(id){
 async function saveCustomer(id){
   const name = document.getElementById('cu_name').value.trim();
   if(!name){ toast('Informe o nome do cliente.'); return; }
+  const bday = Number(document.getElementById('cu_bday').value)||0;
+  const bmonth = Number(document.getElementById('cu_bmonth').value)||0;
+  if(!bday || !bmonth){ toast('Informe o dia e o mês de nascimento.'); return; }
   const payload = {
     name: name,
     phone: document.getElementById('cu_phone').value.trim() || null,
     email: document.getElementById('cu_email').value.trim(),
-    birth_day: Number(document.getElementById('cu_bday').value) || null,
-    birth_month: Number(document.getElementById('cu_bmonth').value) || null,
+    birth_day: bday,
+    birth_month: bmonth,
     cpf: document.getElementById('cu_cpf').value.trim()
   };
   const btn = document.getElementById('cu_save_btn');
