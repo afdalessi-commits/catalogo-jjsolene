@@ -393,6 +393,32 @@ async function enterApp(){
   showTab(currentProfile.role==='comercial' ? 'pedidos' : 'dashboard');
   refreshPedidosBadge();
   applyBranding();
+  autoExpireStaleOrders();
+}
+async function autoExpireStaleOrders(){
+  try{
+    const s = await getSettings();
+    const pixHours = Number(s.auto_cancel_pix_hours)||24;
+    const cardHours = Number(s.auto_cancel_card_hours)||1;
+    const pending = await q(SUPA.from('orders').select('id,payment_method,created_at').eq('status','pendente'));
+    const now = Date.now();
+    let cancelled = 0;
+    for(const o of pending){
+      if(!o.created_at) continue;
+      const ageHours = (now - new Date(o.created_at).getTime())/3600000;
+      const isCard = (o.payment_method||'').indexOf('cartao')===0;
+      const limit = isCard ? cardHours : pixHours;
+      if(ageHours >= limit){
+        try{ await q(SUPA.rpc('cancel_order', { p_order_id: o.id })); cancelled++; }catch(e){ console.error('Erro ao cancelar pedido vencido:', e); }
+      }
+    }
+    if(cancelled>0){
+      toast(cancelled+' pedido(s) pendente(s) vencido(s) foram cancelados automaticamente, liberando o estoque.');
+      const pedidosTab = document.getElementById('tab-pedidos');
+      if(pedidosTab && !pedidosTab.classList.contains('hidden')){ await renderPedidos(); }
+      refreshPedidosBadge();
+    }
+  }catch(e){ console.error('Erro ao verificar pedidos vencidos:', e); }
 }
 function applyRolePermissions(){
   const isComercial = currentProfile && currentProfile.role==='comercial';
@@ -852,30 +878,46 @@ async function deleteTask(id){
    ============================================================ */
 let ordersCache = [];
 async function renderPedidos(){
+  autoExpireStaleOrders();
   const el = document.getElementById('tab-pedidos');
   el.innerHTML = '<div class="empty">Carregando...</div>';
-  const orders = await q(SUPA.from('orders').select('*, order_items(*, products(name))').order('date',{ascending:false}).limit(100));
+  const [orders, s] = await Promise.all([
+    q(SUPA.from('orders').select('*, order_items(*, products(name))').order('date',{ascending:false}).limit(100)),
+    getSettings()
+  ]);
   ordersCache = orders;
   const pendentes = orders.filter(o=>o.status==='pendente');
   const outros = orders.filter(o=>o.status!=='pendente');
 
-  let html = '<div class="page-desc">Pedidos feitos pelo catálogo público. Ao confirmar, vira venda de verdade (baixa o estoque e lança a receita). Ao cancelar, libera o estoque reservado.</div>';
+  let html = '<div class="page-desc">Pedidos feitos pelo catálogo público. Ao confirmar, vira venda de verdade (baixa o estoque e lança a receita). Ao cancelar, libera o estoque reservado. Pedidos pendentes vencidos são cancelados automaticamente (ver prazos em Configurações).</div>';
   html += '<div class="row-actions" style="margin-top:10px;"><button class="btn outline" onclick="exportPedidosCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportPedidosPDF()">🖨️ Exportar PDF</button></div>';
   html += '<div class="section-title">Aguardando confirmação ('+pendentes.length+')</div>';
   if(pendentes.length===0){
     html += '<div class="empty">Nenhum pedido pendente.</div>';
   } else {
-    pendentes.forEach(o=>{ html += pedidoCardHtml(o); });
+    pendentes.forEach(o=>{ html += pedidoCardHtml(o, s); });
   }
   html += '<div class="section-title">Histórico</div>';
   if(outros.length===0){
     html += '<div class="empty">Nenhum pedido no histórico ainda.</div>';
   } else {
-    outros.slice(0,30).forEach(o=>{ html += pedidoCardHtml(o); });
+    outros.slice(0,30).forEach(o=>{ html += pedidoCardHtml(o, s); });
   }
   el.innerHTML = html;
 }
-function pedidoCardHtml(o){
+function waLink(phone){
+  let digits = String(phone||'').replace(/\D/g,'');
+  if(!digits) return '';
+  if(digits.length<=11) digits = '55'+digits;
+  return 'https://wa.me/'+digits;
+}
+function elapsedLabel(ms){
+  const hours = ms/3600000;
+  if(hours < 1) return Math.round(ms/60000)+' min';
+  if(hours < 24) return Math.round(hours)+'h';
+  return Math.round(hours/24)+'d';
+}
+function pedidoCardHtml(o, settings){
   const itemsTxt = (o.order_items||[]).map(it=> (it.products?it.products.name:'?') + ' (Tam '+it.size+') x'+it.qty).join(' · ');
   let html = '<div class="pedido-card '+o.status+'">';
   html += '<div class="pedido-head"><div><strong>'+escapeHtml(o.customer||'Cliente não identificado')+'</strong> · '+fmtDate(o.date)+'</div><div>'+
@@ -892,10 +934,18 @@ function pedidoCardHtml(o){
     if(o.gift_product_id) extras.push('🎁 Inclui brinde');
     html += '<div class="pedido-items">'+extras.join(' · ')+'</div>';
   }
+  if(o.status==='pendente' && o.created_at && settings){
+    const ageMs = Date.now() - new Date(o.created_at).getTime();
+    const isCard = (o.payment_method||'').indexOf('cartao')===0;
+    const limitHours = isCard ? (Number(settings.auto_cancel_card_hours)||1) : (Number(settings.auto_cancel_pix_hours)||24);
+    const pctElapsed = ageMs / (limitHours*3600000);
+    const nearExpiry = pctElapsed >= 0.7;
+    html += '<div class="pedido-items">Parado há <strong'+(nearExpiry?' style="color:#c0392b;"':'')+'>'+elapsedLabel(ageMs)+'</strong>'+(nearExpiry?' <span class="tag bad">será cancelado em breve</span>':'')+'</div>';
+  }
   html += '<div style="display:flex; justify-content:space-between; align-items:center;">';
   html += '<strong>'+fmtMoney(o.total)+'</strong>';
   if(o.status==='pendente'){
-    html += '<div class="row-actions"><button class="btn small" onclick="confirmOrderAction(\''+o.id+'\')">Confirmar pagamento</button><button class="btn small danger" onclick="cancelOrderAction(\''+o.id+'\')">Cancelar</button></div>';
+    html += '<div class="row-actions">'+(o.phone?'<a class="btn small outline" href="'+waLink(o.phone)+'" target="_blank">💬 Chamar no WhatsApp</a>':'')+'<button class="btn small" onclick="confirmOrderAction(\''+o.id+'\')">Confirmar pagamento</button><button class="btn small danger" onclick="cancelOrderAction(\''+o.id+'\')">Cancelar</button></div>';
   }
   html += '</div></div>';
   return html;
@@ -2745,6 +2795,12 @@ const CATALOG_CSS = [
 '.addbtn:disabled{opacity:0.5;cursor:not-allowed;}',
 '.soldout{font-size:11.5px;color:#b3261e;font-weight:700;}',
 '.cart-fab{position:fixed;bottom:22px;right:22px;background:#6b1f33;color:#fff;border-radius:999px;padding:14px 20px;font-weight:700;box-shadow:0 8px 22px rgba(0,0,0,0.28);cursor:pointer;z-index:50;}',
+'.cart-nudge{position:fixed;left:12px;right:12px;bottom:70px;background:#2b1a1f;color:#fff;border-radius:12px;padding:12px 14px;display:none;align-items:center;gap:10px;box-shadow:0 8px 22px rgba(0,0,0,0.3);z-index:66;font-size:13px;}',
+'.cart-nudge.show{display:flex;}',
+'.cart-nudge span{flex:1;line-height:1.35;}',
+'.cart-nudge button{border:none;border-radius:8px;padding:8px 12px;font-weight:700;font-size:12.5px;cursor:pointer;white-space:nowrap;}',
+'.cart-nudge button:not(.close){background:#fff;color:#2b1a1f;}',
+'.cart-nudge button.close{background:transparent;color:#fff;padding:8px 4px;font-weight:400;}',
 '.cart-panel{position:fixed;top:0;right:0;width:min(360px,88vw);height:100%;background:#fff;box-shadow:-8px 0 24px rgba(0,0,0,0.18);transform:translateX(100%);transition:transform .25s;z-index:70;display:flex;flex-direction:column;overflow-y:auto;}',
 '.cart-panel.open{transform:translateX(0);}',
 '.cart-head{padding:18px;background:#2b1420;color:#fff;display:flex;justify-content:space-between;align-items:center;}',
@@ -2901,6 +2957,10 @@ const CATALOG_JS = [
 'var sb = window.supabase.createClient(SB_URL, SB_ANON);',
 'var CATALOG = { settings:null, categories:[], products:[], media:[], banners:[], giftRules:[], activeTab:"inicio", filterCategoryId:null, heroSlide:0 };',
 'var cart = [];',
+'var lastCartChangeAt = Date.now();',
+'var cartNudgeShown = false;',
+'var cartNudgeDismissed = false;',
+'var CART_NUDGE_MS = 3*60*1000;',
 'var refCouponCode = new URLSearchParams(window.location.search).get("cupom");',
 'var refCouponTried = false;',
 'var appliedCoupon = null;',
@@ -3476,6 +3536,25 @@ const CATALOG_JS = [
 '}',
 'function openCart(){ document.getElementById("cartPanel").classList.add("open"); document.getElementById("cartOverlay").classList.add("show"); }',
 'function closeCart(){ document.getElementById("cartPanel").classList.remove("open"); document.getElementById("cartOverlay").classList.remove("show"); }',
+'function checkCartNudge(){',
+'  if(cartNudgeDismissed || cartNudgeShown || cart.length===0) return;',
+'  var panel = document.getElementById("cartPanel");',
+'  if(panel && panel.classList.contains("open")) return;',
+'  if(Date.now() - lastCartChangeAt >= CART_NUDGE_MS){ showCartNudge(); }',
+'}',
+'function showCartNudge(){',
+'  cartNudgeShown = true;',
+'  var el = document.getElementById("cartNudge");',
+'  if(!el){ el = document.createElement("div"); el.id = "cartNudge"; el.className = "cart-nudge"; document.body.appendChild(el); }',
+'  var count = cart.filter(function(it){return !it.isGift;}).reduce(function(s,it){return s+it.qty;},0);',
+'  el.innerHTML = "<span>🛍️ Você tem "+count+" peça(s) na sacola! Finalize antes que outra pessoa leve.</span><button type=\\"button\\" onclick=\\"openCart();dismissCartNudge();\\">Ver sacola</button><button type=\\"button\\" class=\\"close\\" onclick=\\"dismissCartNudge()\\">✕</button>";',
+'  el.classList.add("show");',
+'}',
+'function dismissCartNudge(){',
+'  cartNudgeDismissed = true;',
+'  var el = document.getElementById("cartNudge");',
+'  if(el) el.classList.remove("show");',
+'}',
 'function openSearch(){',
 '  var m = genericModal("<div class=\\"search-box\\"><input id=\\"searchInput\\" placeholder=\\"Buscar produtos...\\" autofocus><div id=\\"searchResults\\" class=\\"grid\\" style=\\"margin-top:12px;\\"></div><div id=\\"searchEmpty\\" style=\\"display:none;color:#8a7568;font-size:13px;text-align:center;padding:20px 0;\\">Nenhum produto encontrado.</div></div>");',
 '  m.box.style.maxWidth = "460px";',
@@ -3561,6 +3640,7 @@ const CATALOG_JS = [
 '  renderCart();',
 '}',
 'function renderCart(){',
+'  lastCartChangeAt = Date.now(); cartNudgeShown = false; cartNudgeDismissed = false;',
 '  syncGiftLine();',
 '  var itemsEl = document.getElementById("cartItems");',
 '  var footEl = document.getElementById("cartFoot");',
@@ -3641,6 +3721,7 @@ const CATALOG_JS = [
 '    return;',
 '  }',
 '  try{ await sb.rpc("set_order_referral_source", { p_order_id: orderId, p_source: source }); }catch(e){}',
+'  try{ await sb.rpc("set_order_payment_method", { p_order_id: orderId, p_method: "pix" }); }catch(e){}',
 '  try{ await sb.rpc("upsert_customer", { p_name: name, p_phone: phone, p_email: null, p_birth_day: null, p_birth_month: null, p_cpf: null }); }catch(e){}',
 '  var lines = cart.map(function(it){ return "- "+it.name+" (Tam "+it.size+") x"+it.qty+" — "+money(lineUnitPrice(it)*it.qty); });',
 '  var total = (res.data && res.data.total!=null) ? res.data.total : cartSubtotal();',
@@ -3675,6 +3756,7 @@ const CATALOG_JS = [
 '    return;',
 '  }',
 '  try{ await sb.rpc("set_order_referral_source", { p_order_id: orderId, p_source: source }); }catch(e){}',
+'  try{ await sb.rpc("set_order_payment_method", { p_order_id: orderId, p_method: "cartao_pendente" }); }catch(e){}',
 '  try{ await sb.rpc("upsert_customer", { p_name: name, p_phone: phone, p_email: null, p_birth_day: null, p_birth_month: null, p_cpf: null }); }catch(e){}',
 '  var chargeTotal = (res.data && res.data.total!=null) ? res.data.total : cartSubtotal();',
 '  var itemCount = cart.filter(function(it){return !it.isGift;}).reduce(function(s,it){return s+it.qty;},0);',
@@ -3726,7 +3808,8 @@ const CATALOG_JS = [
 '  }catch(e){ /* silencioso — a loja confere manualmente se algo falhar aqui */ }',
 '  window.history.replaceState({}, document.title, window.location.pathname);',
 '}',
-'loadData().then(checkReturnFromInfinitePay);'
+'loadData().then(checkReturnFromInfinitePay);',
+'setInterval(checkCartNudge, 20000);'
 ].join('\n');
 
 /* ============================================================
@@ -3886,6 +3969,14 @@ async function renderConfig(){
   html += '<div class="note">Com isso preenchido, o catálogo mostra um botão "Pagar com cartão" que leva o cliente direto pro checkout do InfinitePay (Pix ou cartão em até 12x).</div>';
   html += '</div>';
 
+  html += '<div class="form-block"><h4>Reserva de estoque</h4>';
+  html += '<div class="page-desc">Quando a cliente finaliza um pedido, a peça já fica reservada na hora, antes mesmo dela pagar. Se ela desistir ou demorar demais, o sistema cancela o pedido sozinho e libera a peça pra outra pessoa comprar.</div>';
+  html += '<div class="form-row">';
+  html += '<div class="field"><label>Cancelar Pix/combinar não pago depois de (horas)</label><input id="cf_autocancel_pix" type="number" min="1" step="1" value="'+(s.auto_cancel_pix_hours!=null?s.auto_cancel_pix_hours:24)+'"></div>';
+  html += '<div class="field"><label>Cancelar cartão não pago depois de (horas)</label><input id="cf_autocancel_card" type="number" min="0.25" step="0.25" value="'+(s.auto_cancel_card_hours!=null?s.auto_cancel_card_hours:1)+'"></div>';
+  html += '</div>';
+  html += '</div>';
+
   cashbackRulesCache = cashbackRules;
   html += '<div class="section-title">💰 Regras de Cashback</div>';
   html += '<div class="page-desc">Pode ativar mais de uma ao mesmo tempo. Quando um pedido é confirmado, o sistema aplica a regra ativa mais vantajosa pra aquele cliente naquele momento (não soma as regras). Edite os valores de cada uma antes de ativar.</div>';
@@ -3987,6 +4078,8 @@ async function saveConfig(){
     installments_max: Math.min(12, Math.max(1, Number(document.getElementById('cf_inst_max').value)||1)),
     installments_free_max: Math.min(12, Math.max(0, Number(document.getElementById('cf_inst_free').value)||0)),
     installments_interest_rate: Number(document.getElementById('cf_inst_rate').value)||0,
+    auto_cancel_pix_hours: Math.max(1, Number(document.getElementById('cf_autocancel_pix').value)||24),
+    auto_cancel_card_hours: Math.max(0.25, Number(document.getElementById('cf_autocancel_card').value)||1),
     updated_at: new Date().toISOString()
   }).eq('id',1));
   toast('Configurações salvas.');

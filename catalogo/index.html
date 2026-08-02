@@ -42,6 +42,12 @@ h1,h2,h3{font-family:"Playfair Display",serif;margin:0;}
 .addbtn:disabled{opacity:0.5;cursor:not-allowed;}
 .soldout{font-size:11.5px;color:#b3261e;font-weight:700;}
 .cart-fab{position:fixed;bottom:22px;right:22px;background:#6b1f33;color:#fff;border-radius:999px;padding:14px 20px;font-weight:700;box-shadow:0 8px 22px rgba(0,0,0,0.28);cursor:pointer;z-index:50;}
+.cart-nudge{position:fixed;left:12px;right:12px;bottom:70px;background:#2b1a1f;color:#fff;border-radius:12px;padding:12px 14px;display:none;align-items:center;gap:10px;box-shadow:0 8px 22px rgba(0,0,0,0.3);z-index:66;font-size:13px;}
+.cart-nudge.show{display:flex;}
+.cart-nudge span{flex:1;line-height:1.35;}
+.cart-nudge button{border:none;border-radius:8px;padding:8px 12px;font-weight:700;font-size:12.5px;cursor:pointer;white-space:nowrap;}
+.cart-nudge button:not(.close){background:#fff;color:#2b1a1f;}
+.cart-nudge button.close{background:transparent;color:#fff;padding:8px 4px;font-weight:400;}
 .cart-panel{position:fixed;top:0;right:0;width:min(360px,88vw);height:100%;background:#fff;box-shadow:-8px 0 24px rgba(0,0,0,0.18);transform:translateX(100%);transition:transform .25s;z-index:70;display:flex;flex-direction:column;overflow-y:auto;}
 .cart-panel.open{transform:translateX(0);}
 .cart-head{padding:18px;background:#2b1420;color:#fff;display:flex;justify-content:space-between;align-items:center;}
@@ -202,6 +208,10 @@ var SB_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJl
 var sb = window.supabase.createClient(SB_URL, SB_ANON);
 var CATALOG = { settings:null, categories:[], products:[], media:[], banners:[], giftRules:[], activeTab:"inicio", filterCategoryId:null, heroSlide:0 };
 var cart = [];
+var lastCartChangeAt = Date.now();
+var cartNudgeShown = false;
+var cartNudgeDismissed = false;
+var CART_NUDGE_MS = 3*60*1000;
 var refCouponCode = new URLSearchParams(window.location.search).get("cupom");
 var refCouponTried = false;
 var appliedCoupon = null;
@@ -777,6 +787,25 @@ function buildCartUI(){
 }
 function openCart(){ document.getElementById("cartPanel").classList.add("open"); document.getElementById("cartOverlay").classList.add("show"); }
 function closeCart(){ document.getElementById("cartPanel").classList.remove("open"); document.getElementById("cartOverlay").classList.remove("show"); }
+function checkCartNudge(){
+  if(cartNudgeDismissed || cartNudgeShown || cart.length===0) return;
+  var panel = document.getElementById("cartPanel");
+  if(panel && panel.classList.contains("open")) return;
+  if(Date.now() - lastCartChangeAt >= CART_NUDGE_MS){ showCartNudge(); }
+}
+function showCartNudge(){
+  cartNudgeShown = true;
+  var el = document.getElementById("cartNudge");
+  if(!el){ el = document.createElement("div"); el.id = "cartNudge"; el.className = "cart-nudge"; document.body.appendChild(el); }
+  var count = cart.filter(function(it){return !it.isGift;}).reduce(function(s,it){return s+it.qty;},0);
+  el.innerHTML = "<span>🛍️ Você tem "+count+" peça(s) na sacola! Finalize antes que outra pessoa leve.</span><button type=\"button\" onclick=\"openCart();dismissCartNudge();\">Ver sacola</button><button type=\"button\" class=\"close\" onclick=\"dismissCartNudge()\">✕</button>";
+  el.classList.add("show");
+}
+function dismissCartNudge(){
+  cartNudgeDismissed = true;
+  var el = document.getElementById("cartNudge");
+  if(el) el.classList.remove("show");
+}
 function openSearch(){
   var m = genericModal("<div class=\"search-box\"><input id=\"searchInput\" placeholder=\"Buscar produtos...\" autofocus><div id=\"searchResults\" class=\"grid\" style=\"margin-top:12px;\"></div><div id=\"searchEmpty\" style=\"display:none;color:#8a7568;font-size:13px;text-align:center;padding:20px 0;\">Nenhum produto encontrado.</div></div>");
   m.box.style.maxWidth = "460px";
@@ -862,6 +891,7 @@ async function applyCoupon(){
   renderCart();
 }
 function renderCart(){
+  lastCartChangeAt = Date.now(); cartNudgeShown = false; cartNudgeDismissed = false;
   syncGiftLine();
   var itemsEl = document.getElementById("cartItems");
   var footEl = document.getElementById("cartFoot");
@@ -942,6 +972,7 @@ async function checkout(){
     return;
   }
   try{ await sb.rpc("set_order_referral_source", { p_order_id: orderId, p_source: source }); }catch(e){}
+  try{ await sb.rpc("set_order_payment_method", { p_order_id: orderId, p_method: "pix" }); }catch(e){}
   try{ await sb.rpc("upsert_customer", { p_name: name, p_phone: phone, p_email: null, p_birth_day: null, p_birth_month: null, p_cpf: null }); }catch(e){}
   var lines = cart.map(function(it){ return "- "+it.name+" (Tam "+it.size+") x"+it.qty+" — "+money(lineUnitPrice(it)*it.qty); });
   var total = (res.data && res.data.total!=null) ? res.data.total : cartSubtotal();
@@ -976,6 +1007,7 @@ async function checkoutCard(){
     return;
   }
   try{ await sb.rpc("set_order_referral_source", { p_order_id: orderId, p_source: source }); }catch(e){}
+  try{ await sb.rpc("set_order_payment_method", { p_order_id: orderId, p_method: "cartao_pendente" }); }catch(e){}
   try{ await sb.rpc("upsert_customer", { p_name: name, p_phone: phone, p_email: null, p_birth_day: null, p_birth_month: null, p_cpf: null }); }catch(e){}
   var chargeTotal = (res.data && res.data.total!=null) ? res.data.total : cartSubtotal();
   var itemCount = cart.filter(function(it){return !it.isGift;}).reduce(function(s,it){return s+it.qty;},0);
@@ -1028,6 +1060,7 @@ async function checkReturnFromInfinitePay(){
   window.history.replaceState({}, document.title, window.location.pathname);
 }
 loadData().then(checkReturnFromInfinitePay);
+setInterval(checkCartNudge, 20000);
 </script>
 </body>
 </html>
