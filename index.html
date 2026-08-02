@@ -688,7 +688,7 @@ function renderAgendaHTML(){
     html += '<div class="cal-cell'+(isToday?' today':'')+'" onclick="openDayTasks(\''+cell.dateStr+'\')">';
     html += '<div class="cal-daynum">'+cell.day+'</div>';
     dayTasks.slice(0,3).forEach(function(t){
-      html += '<div class="cal-task-chip prio-'+t.priority+(t.done?' done':'')+'">'+escapeHtml(t.title)+'</div>';
+      html += '<div class="cal-task-chip prio-'+t.priority+(t.done?' done':'')+'">'+(t.visibility==='shared'?'👥 ':'')+escapeHtml(t.title)+'</div>';
     });
     if(dayTasks.length>3){ html += '<div class="cal-more">+'+(dayTasks.length-3)+' mais</div>'; }
     html += '</div>';
@@ -715,6 +715,7 @@ function openDayTasks(dateStr){
       if(t.due_time){ html += '<div style="font-size:12px;color:var(--muted);margin-top:2px;">⏰ '+t.due_time.slice(0,5)+'</div>'; }
       if(t.description){ html += '<div style="font-size:12.5px;margin-top:4px;">'+escapeHtml(t.description)+'</div>'; }
       html += '<span class="tag '+(t.priority==='alta'?'bad':t.priority==='media'?'warn':'ok')+'" style="margin-top:6px;display:inline-block;">'+(t.priority==='alta'?'Alta':t.priority==='media'?'Média':'Baixa')+'</span>';
+      if(t.visibility==='shared'){ html += '<span class="tag info" style="margin-top:6px;margin-left:6px;display:inline-block;">👥 Compartilhada</span>'; }
       html += '</div>';
       html += '<div class="row-actions">';
       html += '<button class="btn small outline" onclick="openTaskForm(\''+dateStr+'\',\''+t.id+'\')">Editar</button>';
@@ -727,8 +728,9 @@ function openDayTasks(dateStr){
   openModal(html);
 }
 function openTaskForm(dateStr, id){
-  let t = { id:null, title:'', description:'', due_date:dateStr, due_time:'', priority:'media', done:false };
+  let t = { id:null, title:'', description:'', due_date:dateStr, due_time:'', priority:'media', done:false, visibility:'private' };
   if(id){ const found = agendaTasksCache.find(function(x){ return x.id===id; }); if(found) t = found; }
+  const isAdmin = currentProfile && currentProfile.role==='admin';
   let html = '<h3>'+(id?'Editar tarefa':'Nova tarefa')+'</h3>';
   html += '<div class="field" style="margin-bottom:8px;"><label>Título</label><input id="tk_title" value="'+escapeHtml(t.title)+'" placeholder="Ex: Ligar pro fornecedor"></div>';
   html += '<div class="form-row">';
@@ -737,6 +739,9 @@ function openTaskForm(dateStr, id){
   html += '</div>';
   html += '<div class="field" style="margin-bottom:8px;"><label>Prioridade</label><select id="tk_priority"><option value="alta"'+(t.priority==='alta'?' selected':'')+'>Alta</option><option value="media"'+(t.priority==='media'?' selected':'')+'>Média</option><option value="baixa"'+(t.priority==='baixa'?' selected':'')+'>Baixa</option></select></div>';
   html += '<div class="field" style="margin-bottom:8px;"><label>Descrição (opcional)</label><textarea id="tk_desc" rows="2">'+escapeHtml(t.description||'')+'</textarea></div>';
+  if(isAdmin){
+    html += '<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px;"><label class="switch"><input type="checkbox" id="tk_shared" '+(t.visibility==='shared'?'checked':'')+'><span class="slider"></span></label> Compartilhar com outros administradores (ex: reunião da empresa)</label>';
+  }
   html += '<div class="row-actions"><button class="btn" id="tk_save_btn" onclick="saveTask('+(id?"'"+id+"'":'null')+')">Salvar</button><button class="btn outline" onclick="closeModal()">Cancelar</button></div>';
   openModal(html);
 }
@@ -745,13 +750,14 @@ async function saveTask(id){
   if(!title){ toast('Informe o título da tarefa.'); return; }
   const dueDate = document.getElementById('tk_date').value;
   if(!dueDate){ toast('Informe a data.'); return; }
+  const sharedCheckbox = document.getElementById('tk_shared');
   const payload = {
     title: title,
     description: document.getElementById('tk_desc').value.trim(),
     due_date: dueDate,
     due_time: document.getElementById('tk_time').value || null,
     priority: document.getElementById('tk_priority').value,
-    owner_id: currentUser.id
+    visibility: (sharedCheckbox && sharedCheckbox.checked) ? 'shared' : 'private'
   };
   const btn = document.getElementById('tk_save_btn');
   btn.disabled = true; btn.textContent = 'Salvando...';
@@ -759,6 +765,7 @@ async function saveTask(id){
   if(id){
     r = await SUPA.from('tasks').update(payload).eq('id', id);
   } else {
+    payload.owner_id = currentUser.id;
     r = await SUPA.from('tasks').insert([payload]);
   }
   if(r.error){
