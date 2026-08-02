@@ -216,6 +216,18 @@ function toggleFavorite(id){
   if(CATALOG.activeTab==="favoritos"){ buildViewFavoritos(); }
 }
 function money(n){ return "R$ " + (Number(n)||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function installmentText(p, settings){
+  var useOverride = p.installments_override;
+  var max = useOverride ? (Number(p.installments_max)||1) : (Number(settings.installments_max)||3);
+  var free = useOverride ? (p.installments_interest_free!==false) : (settings.installments_interest_free!==false);
+  var rate = useOverride ? (Number(p.installments_interest_rate)||0) : (Number(settings.installments_interest_rate)||0);
+  if(max<=1) return null;
+  if(free || rate<=0){
+    return max+"x de "+money(p.sale_price/max)+" sem juros";
+  }
+  var totalWithInterest = p.sale_price * (1 + (rate/100)*max);
+  return max+"x de "+money(totalWithInterest/max)+" (total "+money(totalWithInterest)+")";
+}
 function esc(s){ var d=document.createElement("div"); d.textContent = (s==null?"":s); return d.innerHTML; }
 var CAT_ICONS = {
   hanger: "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 3a2 2 0 1 1 2 2c-.3 1 .2 1.6 1 2.1l6 3.9a1.2 1.2 0 0 1-.6 2.2H3.6a1.2 1.2 0 0 1-.6-2.2l6-3.9c.8-.5 1.3-1.1 1-2.1\"/><path d=\"M4 19h16\"/></svg>",
@@ -650,8 +662,11 @@ function buildCard(p){
   var price = document.createElement("div"); price.className="pprice"; price.textContent = money(p.sale_price);
   priceCol.appendChild(price);
   if(p.sale_price >= 30){
-    var inst = document.createElement("div"); inst.className="installment"; inst.textContent = "3x de "+money(p.sale_price/3)+" sem juros";
-    priceCol.appendChild(inst);
+    var instTxt = installmentText(p, CATALOG.settings||{});
+    if(instTxt){
+      var inst = document.createElement("div"); inst.className="installment"; inst.textContent = instTxt;
+      priceCol.appendChild(inst);
+    }
   }
   priceRow.appendChild(priceCol);
   if(CATALOG.settings.whatsapp){

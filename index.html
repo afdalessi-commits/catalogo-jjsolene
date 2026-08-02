@@ -647,7 +647,7 @@ async function renderEstoque(){
 
 async function openProductForm(id){
   const cats = await getCategories();
-  let p = { id:null, sku:'', name:'', category_id: cats[0]?cats[0].id:'', cost_price:0, sale_price:0, description:'', promo_text:'', show_in_catalog:true, image_url:'', ncm:'', color:'', discount_type:'none', discount_value:0, discount_min_qty:1, product_sizes:[{size:'P',stock:0,barcode:''},{size:'M',stock:0,barcode:''},{size:'G',stock:0,barcode:''}] };
+  let p = { id:null, sku:'', name:'', category_id: cats[0]?cats[0].id:'', cost_price:0, sale_price:0, description:'', promo_text:'', show_in_catalog:true, image_url:'', ncm:'', color:'', discount_type:'none', discount_value:0, discount_min_qty:1, installments_override:false, installments_max:3, installments_interest_free:true, installments_interest_rate:0, product_sizes:[{size:'P',stock:0,barcode:''},{size:'M',stock:0,barcode:''},{size:'G',stock:0,barcode:''}] };
   let media = [];
   if(id){
     const rows = await q(SUPA.from('products').select('*, product_sizes(*)').eq('id', id));
@@ -677,6 +677,14 @@ async function openProductForm(id){
   html += '<div class="field"><label>Tipo</label><select id="f_disc_type"><option value="none"'+(p.discount_type==='none'?' selected':'')+'>Sem desconto</option><option value="percent"'+(p.discount_type==='percent'?' selected':'')+'>Percentual (%)</option><option value="fixed"'+(p.discount_type==='fixed'?' selected':'')+'>Valor fixo por peça (R$)</option></select></div>';
   html += '<div class="field"><label>Valor do desconto</label><input id="f_disc_value" type="number" step="0.01" value="'+(p.discount_value||0)+'"></div>';
   html += '<div class="field"><label>Qtd. mínima</label><input id="f_disc_minqty" type="number" min="1" value="'+(p.discount_min_qty||1)+'"></div>';
+  html += '</div>';
+  html += '<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:10px 0;"><label class="switch"><input type="checkbox" id="f_inst_override" onchange="document.getElementById(\'f_inst_fields\').classList.toggle(\'hidden\', !this.checked)" '+(p.installments_override?'checked':'')+'><span class="slider"></span></label> Personalizar parcelamento deste produto (em vez de usar a regra geral)</label>';
+  html += '<div id="f_inst_fields" class="'+(p.installments_override?'':'hidden')+'">';
+  html += '<div class="form-row">';
+  html += '<div class="field"><label>Máximo de parcelas</label><input id="f_inst_max" type="number" min="1" max="12" value="'+(p.installments_max||3)+'"></div>';
+  html += '<div class="field"><label>Parcelamento</label><select id="f_inst_free" onchange="toggleInstRateField(\'f\')"><option value="true"'+(p.installments_interest_free!==false?' selected':'')+'>Sem juros</option><option value="false"'+(p.installments_interest_free===false?' selected':'')+'>Com juros</option></select></div>';
+  html += '</div>';
+  html += '<div class="field" id="f_inst_rate_field" style="margin-bottom:8px;'+(p.installments_interest_free!==false?'display:none;':'')+'"><label>Taxa de juros ao mês (%)</label><input id="f_inst_rate" type="number" min="0" step="0.01" value="'+(p.installments_interest_rate||0)+'"></div>';
   html += '</div>';
   html += '<div class="field" style="margin-bottom:8px;"><label>Foto principal (aparece na listagem)</label><input type="file" id="f_photo" accept="image/*" onchange="previewPhoto(this)">';
   html += '<img id="f_photo_preview" class="upload-preview'+(p.image_url?'':' hidden')+'" src="'+escapeHtml(p.image_url||'')+'"></div>';
@@ -751,7 +759,11 @@ async function saveProduct(id){
       color: document.getElementById('f_color').value.trim(),
       discount_type: document.getElementById('f_disc_type').value,
       discount_value: Number(document.getElementById('f_disc_value').value)||0,
-      discount_min_qty: Number(document.getElementById('f_disc_minqty').value)||1
+      discount_min_qty: Number(document.getElementById('f_disc_minqty').value)||1,
+      installments_override: document.getElementById('f_inst_override').checked,
+      installments_max: Math.min(12, Math.max(1, Number(document.getElementById('f_inst_max').value)||1)),
+      installments_interest_free: document.getElementById('f_inst_free').value==='true',
+      installments_interest_rate: Number(document.getElementById('f_inst_rate').value)||0
     };
     let productId = id;
     if(id){
@@ -2114,6 +2126,18 @@ const CATALOG_JS = [
 '  if(CATALOG.activeTab==="favoritos"){ buildViewFavoritos(); }',
 '}',
 'function money(n){ return "R$ " + (Number(n)||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2}); }',
+'function installmentText(p, settings){',
+'  var useOverride = p.installments_override;',
+'  var max = useOverride ? (Number(p.installments_max)||1) : (Number(settings.installments_max)||3);',
+'  var free = useOverride ? (p.installments_interest_free!==false) : (settings.installments_interest_free!==false);',
+'  var rate = useOverride ? (Number(p.installments_interest_rate)||0) : (Number(settings.installments_interest_rate)||0);',
+'  if(max<=1) return null;',
+'  if(free || rate<=0){',
+'    return max+"x de "+money(p.sale_price/max)+" sem juros";',
+'  }',
+'  var totalWithInterest = p.sale_price * (1 + (rate/100)*max);',
+'  return max+"x de "+money(totalWithInterest/max)+" (total "+money(totalWithInterest)+")";',
+'}',
 'function esc(s){ var d=document.createElement("div"); d.textContent = (s==null?"":s); return d.innerHTML; }',
 'var CAT_ICONS = {',
 '  hanger: "<svg viewBox=\\"0 0 24 24\\" fill=\\"none\\" stroke=\\"currentColor\\" stroke-width=\\"1.6\\" stroke-linecap=\\"round\\" stroke-linejoin=\\"round\\"><path d=\\"M12 3a2 2 0 1 1 2 2c-.3 1 .2 1.6 1 2.1l6 3.9a1.2 1.2 0 0 1-.6 2.2H3.6a1.2 1.2 0 0 1-.6-2.2l6-3.9c.8-.5 1.3-1.1 1-2.1\\"/><path d=\\"M4 19h16\\"/></svg>",',
@@ -2548,8 +2572,11 @@ const CATALOG_JS = [
 '  var price = document.createElement("div"); price.className="pprice"; price.textContent = money(p.sale_price);',
 '  priceCol.appendChild(price);',
 '  if(p.sale_price >= 30){',
-'    var inst = document.createElement("div"); inst.className="installment"; inst.textContent = "3x de "+money(p.sale_price/3)+" sem juros";',
-'    priceCol.appendChild(inst);',
+'    var instTxt = installmentText(p, CATALOG.settings||{});',
+'    if(instTxt){',
+'      var inst = document.createElement("div"); inst.className="installment"; inst.textContent = instTxt;',
+'      priceCol.appendChild(inst);',
+'    }',
 '  }',
 '  priceRow.appendChild(priceCol);',
 '  if(CATALOG.settings.whatsapp){',
@@ -2950,6 +2977,15 @@ async function renderConfig(){
   html += '<div class="note">Quando um pedido é confirmado e o telefone do cliente já está cadastrado, esse percentual do valor da compra vira saldo de cashback (aba Clientes).</div>';
   html += '</div>';
 
+  html += '<div class="form-block"><h4>Parcelamento (padrão do catálogo)</h4>';
+  html += '<div class="note">Aparece embaixo do preço de cada produto (ex: "3x de R$29,97 sem juros"). Um produto pode ter uma regra própria, personalizada na tela de Estoque — nesse caso ela vale no lugar desta.</div>';
+  html += '<div class="form-row">';
+  html += '<div class="field"><label>Máximo de parcelas</label><input id="cf_inst_max" type="number" min="1" max="12" value="'+(s.installments_max||3)+'"></div>';
+  html += '<div class="field"><label>Parcelamento</label><select id="cf_inst_free" onchange="toggleInstRateField(\'cf\')"><option value="true"'+(s.installments_interest_free!==false?' selected':'')+'>Sem juros</option><option value="false"'+(s.installments_interest_free===false?' selected':'')+'>Com juros</option></select></div>';
+  html += '</div>';
+  html += '<div class="field" id="cf_inst_rate_field" style="margin-bottom:8px;'+(s.installments_interest_free!==false?'display:none;':'')+'"><label>Taxa de juros ao mês (%)</label><input id="cf_inst_rate" type="number" min="0" step="0.01" value="'+(s.installments_interest_rate||0)+'"></div>';
+  html += '</div>';
+
   html += '<button class="btn" onclick="saveConfig()">Salvar configurações</button>';
 
   html += '<div class="section-title">Categorias do catálogo</div>';
@@ -3012,6 +3048,10 @@ async function removeAccess(id){
   await q(SUPA.from('profiles').delete().eq('id', id));
   await renderConfig();
 }
+function toggleInstRateField(prefix){
+  const isFree = document.getElementById(prefix+'_inst_free').value==='true';
+  document.getElementById(prefix+'_inst_rate_field').style.display = isFree ? 'none' : '';
+}
 async function saveConfig(){
   await q(SUPA.from('settings').update({
     store_name: document.getElementById('cf_name').value.trim() || 'Loja',
@@ -3029,6 +3069,9 @@ async function saveConfig(){
     attendant1_phone: document.getElementById('cf_at1_phone').value.trim(),
     attendant2_name: document.getElementById('cf_at2_name').value.trim(),
     attendant2_phone: document.getElementById('cf_at2_phone').value.trim(),
+    installments_max: Math.min(12, Math.max(1, Number(document.getElementById('cf_inst_max').value)||1)),
+    installments_interest_free: document.getElementById('cf_inst_free').value==='true',
+    installments_interest_rate: Number(document.getElementById('cf_inst_rate').value)||0,
     updated_at: new Date().toISOString()
   }).eq('id',1));
   toast('Configurações salvas.');
