@@ -64,6 +64,22 @@
   .grid-3{grid-template-columns:repeat(3,1fr);}
   .grid-2{grid-template-columns:repeat(2,1fr);}
   @media(max-width:1100px){.grid-4{grid-template-columns:repeat(2,1fr);}.grid-3{grid-template-columns:repeat(2,1fr);}.grid-2{grid-template-columns:1fr;}}
+  .cal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px;}
+  .cal-head .cal-month-label{font-family:'Playfair Display',serif;font-size:19px;color:var(--wine-dark);min-width:170px;text-align:center;}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;}
+  .cal-daylabel{font-size:11px;font-weight:700;color:var(--muted);text-align:center;padding:2px 0 6px;text-transform:uppercase;}
+  .cal-cell{min-height:88px;border:1px solid var(--border);border-radius:9px;padding:5px;cursor:pointer;background:#fff;display:flex;flex-direction:column;gap:3px;transition:box-shadow .15s;}
+  .cal-cell:hover{box-shadow:0 3px 10px rgba(107,31,51,0.12);}
+  .cal-cell.other-month{background:var(--cream);opacity:.55;}
+  .cal-cell.today{border-color:var(--wine);border-width:2px;}
+  .cal-daynum{font-size:12px;font-weight:700;color:var(--wine-dark);}
+  .cal-task-chip{font-size:10.5px;padding:2px 6px;border-radius:5px;background:var(--cream);color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-left:3px solid var(--muted);}
+  .cal-task-chip.prio-alta{border-left-color:var(--danger);}
+  .cal-task-chip.prio-media{border-left-color:var(--warn);}
+  .cal-task-chip.prio-baixa{border-left-color:var(--success);}
+  .cal-task-chip.done{text-decoration:line-through;opacity:.55;}
+  .cal-more{font-size:10px;color:var(--muted);}
+  @media(max-width:700px){.cal-cell{min-height:56px;font-size:11px;}.cal-daylabel{font-size:9.5px;}}
   .kpi{background:linear-gradient(135deg,var(--wine),var(--wine-dark));color:#fff;border-radius:14px;padding:18px 20px;box-shadow:0 8px 20px rgba(107,31,51,0.25);}
   .kpi .label{font-size:11.5px;letter-spacing:0.8px;text-transform:uppercase;opacity:0.8;}
   .kpi .value{font-family:'Playfair Display',serif;font-size:24px;font-weight:700;margin-top:6px;}
@@ -152,6 +168,7 @@
       <div class="sub">Sistema de Gestão</div>
     </div>
     <div class="nav-item active" data-tab="dashboard"><span class="nav-icon">🏠</span> Dashboard</div>
+    <div class="nav-item" data-tab="agenda"><span class="nav-icon">🗓️</span> Agenda</div>
     <div class="nav-item" data-tab="pedidos"><span class="nav-icon">🔔</span> Pedidos <span class="nav-badge hidden" id="pedidosBadge">0</span></div>
     <div class="nav-item" data-tab="estoque"><span class="nav-icon">👗</span> Estoque</div>
     <div class="nav-item" data-tab="compras"><span class="nav-icon">📦</span> Compras</div>
@@ -178,6 +195,7 @@
       <div class="today" id="todayLabel"></div>
     </div>
     <div id="tab-dashboard" class="tab-panel"></div>
+    <div id="tab-agenda" class="tab-panel hidden"></div>
     <div id="tab-pedidos" class="tab-panel hidden"></div>
     <div id="tab-estoque" class="tab-panel hidden"></div>
     <div id="tab-compras" class="tab-panel hidden"></div>
@@ -218,7 +236,7 @@ let categoriesCache = null;
 
 /* ---------- helpers gerais ---------- */
 function uidLocal(prefix){ return (prefix||'id')+'_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
-function todayISO(){ return new Date().toISOString().slice(0,10); }
+function todayISO(){ const d = new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function fmtDate(iso){ if(!iso) return '—'; const d = new Date(iso); if(isNaN(d)) return iso; return d.toLocaleDateString('pt-BR'); }
 function fmtMoney(n){ n = Number(n)||0; return 'R$ ' + n.toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2}); }
 function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -318,7 +336,7 @@ async function doLogout(){
   document.getElementById('appRoot').classList.add('hidden');
   renderLoginScreen();
 }
-const COMERCIAL_ALLOWED_TABS = ['pedidos','estoque','vendas','clientes'];
+const COMERCIAL_ALLOWED_TABS = ['agenda','pedidos','estoque','vendas','clientes'];
 async function enterApp(){
   const profileR = await SUPA.from('profiles').select('*').eq('id', currentUser.id).maybeSingle();
   if(profileR.error || !profileR.data){
@@ -372,7 +390,7 @@ async function refreshPedidosBadge(){
    NAVEGAÇÃO
    ============================================================ */
 const TAB_TITLES = {
-  dashboard:'Dashboard', pedidos:'Pedidos', estoque:'Estoque', compras:'Compras', fornecedores:'Fornecedores', vendas:'Vendas',
+  dashboard:'Dashboard', agenda:'Agenda', pedidos:'Pedidos', estoque:'Estoque', compras:'Compras', fornecedores:'Fornecedores', vendas:'Vendas',
   vendedores:'Vendedor(es)', clientes:'Clientes', marketing:'Marketing', financeiro:'Financeiro', nf:'Notas Fiscais', catalogo:'Catálogo', config:'Configurações'
 };
 async function showTab(name){
@@ -387,6 +405,7 @@ async function showTab(name){
 }
 async function renderTab(name){
   if(name==='dashboard') await renderDashboard();
+  if(name==='agenda') await renderAgenda();
   if(name==='pedidos') await renderPedidos();
   if(name==='estoque') await renderEstoque();
   if(name==='compras') await renderCompras();
@@ -606,6 +625,160 @@ function renderDashboardHTML(){
 function kpiCard(label, value, altOrDanger){
   const cls = altOrDanger ? 'kpi alt' : 'kpi';
   return '<div class="'+cls+'"><div class="label">'+label+'</div><div class="value">'+value+'</div></div>';
+}
+
+/* ============================================================
+   AGENDA (calendário de tarefas — pessoal, cada login vê só as suas)
+   ============================================================ */
+let agendaViewDate = new Date();
+let agendaTasksCache = [];
+
+async function renderAgenda(){
+  const el = document.getElementById('tab-agenda');
+  el.innerHTML = '<div class="empty">Carregando...</div>';
+  const year = agendaViewDate.getFullYear();
+  const month = agendaViewDate.getMonth();
+  const rangeStart = new Date(year, month, 1).toISOString().slice(0,10);
+  const rangeEnd = new Date(year, month+1, 0).toISOString().slice(0,10);
+  agendaTasksCache = await q(SUPA.from('tasks').select('*').gte('due_date', rangeStart).lte('due_date', rangeEnd).order('due_time'));
+  renderAgendaHTML();
+}
+function renderAgendaHTML(){
+  const el = document.getElementById('tab-agenda');
+  const year = agendaViewDate.getFullYear();
+  const month = agendaViewDate.getMonth();
+  const monthLabel = agendaViewDate.toLocaleDateString('pt-BR', {month:'long', year:'numeric'});
+  const todayStr = todayISO();
+
+  let html = '<div class="page-desc">Sua agenda de tarefas — só você vê e edita.</div>';
+  html += '<div class="cal-head">';
+  html += '<button class="btn small outline" onclick="agendaChangeMonth(-1)">‹ Mês anterior</button>';
+  html += '<div class="cal-month-label">'+monthLabel.charAt(0).toUpperCase()+monthLabel.slice(1)+'</div>';
+  html += '<button class="btn small outline" onclick="agendaChangeMonth(1)">Próximo mês ›</button>';
+  html += '<button class="btn small" onclick="openTaskForm(\''+todayStr+'\')">+ Nova tarefa</button>';
+  html += '</div>';
+
+  html += '<div class="cal-grid">';
+  ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'].forEach(function(d){ html += '<div class="cal-daylabel">'+d+'</div>'; });
+
+  const firstOfMonth = new Date(year, month, 1);
+  const startWeekday = firstOfMonth.getDay();
+  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const daysInPrevMonth = new Date(year, month, 0).getDate();
+
+  const cells = [];
+  for(let i=0;i<startWeekday;i++){
+    cells.push({ day: daysInPrevMonth - startWeekday + 1 + i, otherMonth:true, dateStr:null });
+  }
+  for(let d=1; d<=daysInMonth; d++){
+    cells.push({ day:d, otherMonth:false, dateStr: year+'-'+String(month+1).padStart(2,'0')+'-'+String(d).padStart(2,'0') });
+  }
+  let nextMonthDay = 1;
+  while(cells.length % 7 !== 0){
+    cells.push({ day: nextMonthDay++, otherMonth:true, dateStr:null });
+  }
+
+  cells.forEach(function(cell){
+    if(cell.otherMonth){
+      html += '<div class="cal-cell other-month"><div class="cal-daynum">'+cell.day+'</div></div>';
+      return;
+    }
+    const dayTasks = agendaTasksCache.filter(function(t){ return t.due_date===cell.dateStr; });
+    const isToday = cell.dateStr===todayStr;
+    html += '<div class="cal-cell'+(isToday?' today':'')+'" onclick="openDayTasks(\''+cell.dateStr+'\')">';
+    html += '<div class="cal-daynum">'+cell.day+'</div>';
+    dayTasks.slice(0,3).forEach(function(t){
+      html += '<div class="cal-task-chip prio-'+t.priority+(t.done?' done':'')+'">'+escapeHtml(t.title)+'</div>';
+    });
+    if(dayTasks.length>3){ html += '<div class="cal-more">+'+(dayTasks.length-3)+' mais</div>'; }
+    html += '</div>';
+  });
+  html += '</div>';
+
+  el.innerHTML = html;
+}
+function agendaChangeMonth(delta){
+  agendaViewDate = new Date(agendaViewDate.getFullYear(), agendaViewDate.getMonth()+delta, 1);
+  renderAgenda();
+}
+function openDayTasks(dateStr){
+  const dayTasks = agendaTasksCache.filter(function(t){ return t.due_date===dateStr; });
+  let html = '<h3>Tarefas — '+fmtDate(dateStr)+'</h3>';
+  if(dayTasks.length===0){
+    html += '<div class="empty">Nenhuma tarefa nesse dia.</div>';
+  } else {
+    dayTasks.forEach(function(t){
+      html += '<div class="form-block" style="margin-bottom:10px;padding:12px 14px;">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:start;gap:8px;">';
+      html += '<div>';
+      html += '<label style="display:flex;align-items:center;gap:8px;font-weight:700;'+(t.done?'text-decoration:line-through;opacity:.6;':'')+'"><input type="checkbox" '+(t.done?'checked':'')+' onchange="toggleTaskDone(\''+t.id+'\', this.checked)"> '+escapeHtml(t.title)+'</label>';
+      if(t.due_time){ html += '<div style="font-size:12px;color:var(--muted);margin-top:2px;">⏰ '+t.due_time.slice(0,5)+'</div>'; }
+      if(t.description){ html += '<div style="font-size:12.5px;margin-top:4px;">'+escapeHtml(t.description)+'</div>'; }
+      html += '<span class="tag '+(t.priority==='alta'?'bad':t.priority==='media'?'warn':'ok')+'" style="margin-top:6px;display:inline-block;">'+(t.priority==='alta'?'Alta':t.priority==='media'?'Média':'Baixa')+'</span>';
+      html += '</div>';
+      html += '<div class="row-actions">';
+      html += '<button class="btn small outline" onclick="openTaskForm(\''+dateStr+'\',\''+t.id+'\')">Editar</button>';
+      html += '<button class="btn small danger" onclick="deleteTask(\''+t.id+'\')">Excluir</button>';
+      html += '</div>';
+      html += '</div></div>';
+    });
+  }
+  html += '<div class="row-actions"><button class="btn" onclick="openTaskForm(\''+dateStr+'\')">+ Nova tarefa nesse dia</button><button class="btn outline" onclick="closeModal()">Fechar</button></div>';
+  openModal(html);
+}
+function openTaskForm(dateStr, id){
+  let t = { id:null, title:'', description:'', due_date:dateStr, due_time:'', priority:'media', done:false };
+  if(id){ const found = agendaTasksCache.find(function(x){ return x.id===id; }); if(found) t = found; }
+  let html = '<h3>'+(id?'Editar tarefa':'Nova tarefa')+'</h3>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>Título</label><input id="tk_title" value="'+escapeHtml(t.title)+'" placeholder="Ex: Ligar pro fornecedor"></div>';
+  html += '<div class="form-row">';
+  html += '<div class="field"><label>Data</label><input id="tk_date" type="date" value="'+t.due_date+'"></div>';
+  html += '<div class="field"><label>Horário (opcional)</label><input id="tk_time" type="time" value="'+(t.due_time?t.due_time.slice(0,5):'')+'"></div>';
+  html += '</div>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>Prioridade</label><select id="tk_priority"><option value="alta"'+(t.priority==='alta'?' selected':'')+'>Alta</option><option value="media"'+(t.priority==='media'?' selected':'')+'>Média</option><option value="baixa"'+(t.priority==='baixa'?' selected':'')+'>Baixa</option></select></div>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>Descrição (opcional)</label><textarea id="tk_desc" rows="2">'+escapeHtml(t.description||'')+'</textarea></div>';
+  html += '<div class="row-actions"><button class="btn" id="tk_save_btn" onclick="saveTask('+(id?"'"+id+"'":'null')+')">Salvar</button><button class="btn outline" onclick="closeModal()">Cancelar</button></div>';
+  openModal(html);
+}
+async function saveTask(id){
+  const title = document.getElementById('tk_title').value.trim();
+  if(!title){ toast('Informe o título da tarefa.'); return; }
+  const dueDate = document.getElementById('tk_date').value;
+  if(!dueDate){ toast('Informe a data.'); return; }
+  const payload = {
+    title: title,
+    description: document.getElementById('tk_desc').value.trim(),
+    due_date: dueDate,
+    due_time: document.getElementById('tk_time').value || null,
+    priority: document.getElementById('tk_priority').value,
+    owner_id: currentUser.id
+  };
+  const btn = document.getElementById('tk_save_btn');
+  btn.disabled = true; btn.textContent = 'Salvando...';
+  let r;
+  if(id){
+    r = await SUPA.from('tasks').update(payload).eq('id', id);
+  } else {
+    r = await SUPA.from('tasks').insert([payload]);
+  }
+  if(r.error){
+    btn.disabled = false; btn.textContent = 'Salvar';
+    toast('Erro: '+r.error.message);
+    return;
+  }
+  closeModal();
+  await renderAgenda();
+  toast('Tarefa salva.');
+}
+async function toggleTaskDone(id, done){
+  await q(SUPA.from('tasks').update({ done }).eq('id', id));
+  await renderAgenda();
+}
+async function deleteTask(id){
+  if(!confirm('Excluir esta tarefa?')) return;
+  await q(SUPA.from('tasks').delete().eq('id', id));
+  closeModal();
+  await renderAgenda();
 }
 
 /* ============================================================
