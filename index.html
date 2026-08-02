@@ -1136,9 +1136,18 @@ async function deleteProduct(id){
 let currentPurchaseItems = [];
 let productsLiteCache = null;
 
+function findProductByBarcode(barcode, products){
+  barcode = (barcode||'').trim();
+  if(!barcode) return null;
+  for(const p of (products||[])){
+    const sz = (p.product_sizes||[]).find(s=> s.barcode && String(s.barcode).trim()===barcode);
+    if(sz) return { product: p, size: sz.size, sizeRow: sz };
+  }
+  return null;
+}
 async function getProductsLite(force){
   if(productsLiteCache && !force) return productsLiteCache;
-  productsLiteCache = await q(SUPA.from('products').select('id,name,sale_price,cost_price,product_sizes(size,stock,reserved)').order('name'));
+  productsLiteCache = await q(SUPA.from('products').select('id,name,sale_price,cost_price,product_sizes(size,stock,reserved,barcode)').order('name'));
   return productsLiteCache;
 }
 
@@ -1172,6 +1181,7 @@ async function openPurchaseForm(){
   let html = '<h3>Nova compra</h3>';
   if(!fornecedores.length){ html += '<div class="note">Dica: cadastre fornecedores na aba <strong>Fornecedores</strong> pra escolher numa lista da próxima vez, em vez de digitar.</div>'; }
   html += '<div class="form-row"><div class="field"><label>Fornecedor</label>'+supplierField+'</div><div class="field"><label>Data</label><input id="pu_date" type="date" value="'+todayISO()+'"></div></div>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>📷 Bipar código de barras (soma 1 unidade a cada leitura)</label><input id="pu_barcode" placeholder="Clique aqui e escaneie..." onkeydown="if(event.key===\'Enter\'){ event.preventDefault(); scanBarcodePurchase(); }"></div>';
   html += '<div id="pu_items_area"></div>';
   html += '<div class="form-row" style="align-items:end;">';
   html += '<div class="field"><label>Produto</label><select id="pu_prod">'+products.map(p=>'<option value="'+p.id+'">'+escapeHtml(p.name)+'</option>').join('')+'</select></div>';
@@ -1186,7 +1196,22 @@ async function openPurchaseForm(){
     document.getElementById('pu_items_area').innerHTML = '<div class="note">Cadastre produtos no Estoque antes de lançar uma compra.</div>';
   } else {
     renderPurchaseItemsArea(products);
+    document.getElementById('pu_barcode').focus();
   }
+}
+function scanBarcodePurchase(){
+  const input = document.getElementById('pu_barcode');
+  const code = input.value.trim();
+  input.value = '';
+  if(!code) return;
+  const found = findProductByBarcode(code, productsLiteCache||[]);
+  if(!found){ toast('Código não encontrado: '+code); input.focus(); return; }
+  const existing = currentPurchaseItems.find(it=> it.productId===found.product.id && it.size===found.size);
+  if(existing){ existing.qty += 1; }
+  else { currentPurchaseItems.push({ productId: found.product.id, size: found.size, qty: 1, cost: found.product.cost_price||0 }); }
+  renderPurchaseItemsArea(productsLiteCache||[]);
+  toast('+1 '+found.product.name+' ('+found.size+')');
+  input.focus();
 }
 function addPurchaseItem(){
   const productId = document.getElementById('pu_prod').value;
@@ -1362,6 +1387,7 @@ async function openSaleForm(){
     html += '<div class="form-row"><div class="field"><label>Forma de pagamento</label><select id="sa_payment"><option>Pix</option><option>Dinheiro</option><option>Cartão de crédito</option><option>Cartão de débito</option><option>Boleto</option></select></div>';
     html += '<div class="field"><label>Vendedor(a) (opcional)</label><select id="sa_seller"><option value="">— sem vendedor(a) —</option>'+sellers.filter(sl=>sl.active!==false).map(sl=>'<option value="'+sl.id+'">'+escapeHtml(sl.name)+'</option>').join('')+'</select></div></div>';
   }
+  html += '<div class="field" style="margin-bottom:8px;"><label>📷 Bipar código de barras (soma 1 unidade a cada leitura)</label><input id="sa_barcode" placeholder="Clique aqui e escaneie..." onkeydown="if(event.key===\'Enter\'){ event.preventDefault(); scanBarcodeSale(); }"></div>';
   html += '<div id="sa_items_area"></div>';
   html += '<div class="form-row" style="align-items:end;">';
   html += '<div class="field"><label>Produto</label><select id="sa_prod" onchange="fillSalePrice()">'+products.map(p=>'<option value="'+p.id+'">'+escapeHtml(p.name)+'</option>').join('')+'</select></div>';
@@ -1377,7 +1403,27 @@ async function openSaleForm(){
   } else {
     fillSalePrice();
     renderSaleItemsArea();
+    document.getElementById('sa_barcode').focus();
   }
+}
+function scanBarcodeSale(){
+  const input = document.getElementById('sa_barcode');
+  const code = input.value.trim();
+  input.value = '';
+  if(!code) return;
+  const found = findProductByBarcode(code, productsLiteCache||[]);
+  if(!found){ toast('Código não encontrado: '+code); input.focus(); return; }
+  const disponivel = (Number(found.sizeRow.stock)||0) - (Number(found.sizeRow.reserved)||0);
+  const existing = currentSaleItems.find(it=> it.productId===found.product.id && it.size===found.size);
+  const qtyAfter = (existing?existing.qty:0) + 1;
+  if(qtyAfter > disponivel){
+    if(!confirm('Estoque disponível insuficiente para '+found.product.name+' ('+found.size+'): disponível '+disponivel+'. Continuar mesmo assim?')){ input.focus(); return; }
+  }
+  if(existing){ existing.qty += 1; }
+  else { currentSaleItems.push({ productId: found.product.id, size: found.size, qty: 1, price: found.product.sale_price||0 }); }
+  renderSaleItemsArea();
+  toast('+1 '+found.product.name+' ('+found.size+')');
+  input.focus();
 }
 function fillSalePrice(){
   const p = (productsLiteCache||[]).find(x=>x.id===document.getElementById('sa_prod').value);
