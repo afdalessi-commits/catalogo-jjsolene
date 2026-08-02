@@ -465,13 +465,14 @@ async function renderDashboard(){
   ]);
   const monthStart = todayISO().slice(0,7)+'-01';
   const currentMonth = Number(todayISO().slice(5,7));
-  const [salesMonth, financeAll, birthdayCustomers, allSales, allSaleItems, allCats] = await Promise.all([
+  const [salesMonth, financeAll, birthdayCustomers, allSales, allSaleItems, allCats, ordersWithSource] = await Promise.all([
     q(SUPA.from('sales').select('total').gte('date', monthStart)),
     q(SUPA.from('finance').select('type,amount,status,date,description').order('date',{ascending:false})),
     q(SUPA.from('customers').select('id,name,phone,birth_day,birth_month').eq('birth_month', currentMonth).order('birth_day')),
     q(SUPA.from('sales').select('customer,phone,total')),
     q(SUPA.from('sale_items').select('qty,price,products(category_id)')),
-    getCategories(true)
+    getCategories(true),
+    q(SUPA.from('orders').select('referral_source,total').not('referral_source','is',null))
   ]);
 
   const normPhone = s => (s||'').replace(/\D/g,'');
@@ -499,6 +500,16 @@ async function renderDashboard(){
   const topCategories = Object.keys(revByCat).map(id=>({ name: catNameById[id]||'—', total: revByCat[id] }))
     .sort((a,b)=>b.total-a.total).slice(0,5);
 
+  const bySource = {};
+  ordersWithSource.forEach(o=>{
+    const src = o.referral_source || 'Não informado';
+    if(!bySource[src]) bySource[src] = { count:0, total:0 };
+    bySource[src].count += 1;
+    bySource[src].total += Number(o.total)||0;
+  });
+  const channelStats = Object.keys(bySource).map(src=>({ source:src, count:bySource[src].count, total:bySource[src].total }))
+    .sort((a,b)=>b.total-a.total);
+
   let totalCusto = 0, totalVenda = 0;
   const baixoEstoque = [];
   products.forEach(p=>{
@@ -518,7 +529,7 @@ async function renderDashboard(){
 
   dashboardCache = {
     settings, pendentesOrders, salesMonth, baixoEstoque, pendentesFinance,
-    totalCusto, totalVenda, totalVendasMes, saldo, birthdayCustomers, topCustomers, topCategories
+    totalCusto, totalVenda, totalVendasMes, saldo, birthdayCustomers, topCustomers, topCategories, channelStats
   };
   renderDashboardHTML();
 }
@@ -531,7 +542,7 @@ function dMoney(v){ return dashValuesHidden ? 'R$ ••••••' : fmtMoney
 function renderDashboardHTML(){
   const el = document.getElementById('tab-dashboard');
   if(!dashboardCache || !el) return;
-  const { settings, pendentesOrders, salesMonth, baixoEstoque, pendentesFinance, totalCusto, totalVenda, totalVendasMes, saldo, birthdayCustomers, topCustomers, topCategories } = dashboardCache;
+  const { settings, pendentesOrders, salesMonth, baixoEstoque, pendentesFinance, totalCusto, totalVenda, totalVendasMes, saldo, birthdayCustomers, topCustomers, topCategories, channelStats } = dashboardCache;
 
   let html = '<div style="display:flex;justify-content:flex-end;margin-bottom:10px;">';
   html += '<button class="btn small outline" onclick="toggleDashboardValues()">'+(dashValuesHidden ? '👁️ Mostrar valores' : '🙈 Ocultar valores')+'</button>';
@@ -612,6 +623,17 @@ function renderDashboardHTML(){
   }
   html += '</div>';
   html += '</div>';
+
+  html += '<div class="section-title">📢 Como os clientes conheceram a loja</div>';
+  if(channelStats.length===0){
+    html += '<div class="empty">Nenhum pedido do catálogo com essa informação ainda.</div>';
+  } else {
+    html += '<div class="card"><table><tr><th>Canal</th><th>Pedidos</th><th>Total</th></tr>';
+    channelStats.forEach(c=>{
+      html += '<tr><td>'+escapeHtml(c.source)+'</td><td>'+c.count+'</td><td>'+dMoney(c.total)+'</td></tr>';
+    });
+    html += '</table></div>';
+  }
 
   html += '<div class="section-title">🌐 Catálogo público</div>';
   html += '<div class="card">'+
@@ -3091,6 +3113,7 @@ const CATALOG_JS = [
 '  if(couponMessage){ footHtml += "<div class=\\"coupon-msg "+(appliedCoupon?"ok":"err")+"\\">"+esc(couponMessage)+"</div>"; }',
 '  footHtml += "<input id=\\"chk_name\\" placeholder=\\"Seu nome\\">";',
 '  footHtml += "<input id=\\"chk_phone\\" placeholder=\\"Seu telefone (com DDD)\\">";',
+'  footHtml += "<select id=\\"chk_source\\"><option value=\\"\\">Como você nos conheceu?</option><option value=\\"Instagram\\">Instagram</option><option value=\\"Facebook\\">Facebook</option><option value=\\"TikTok\\">TikTok</option><option value=\\"Google\\">Google</option><option value=\\"Indicação de amiga(o)\\">Indicação de amiga(o)</option><option value=\\"WhatsApp\\">WhatsApp</option><option value=\\"Já sou cliente\\">Já sou cliente</option><option value=\\"Outro\\">Outro</option></select>";',
 '  footHtml += "<div class=\\"line\\"><span>Subtotal</span><span>"+money(subtotal)+"</span></div>";',
 '  if(discount>0){ footHtml += "<div class=\\"line\\"><span>Desconto</span><span>-"+money(discount)+"</span></div>"; }',
 '  footHtml += "<div class=\\"line total\\"><span>Total</span><strong>"+money(total)+"</strong></div>";',
@@ -3112,7 +3135,9 @@ const CATALOG_JS = [
 '  if(cart.length===0) return;',
 '  var name = (document.getElementById("chk_name").value||"").trim();',
 '  var phone = (document.getElementById("chk_phone").value||"").trim();',
+'  var source = (document.getElementById("chk_source").value||"").trim();',
 '  if(!name || !phone){ alert("Preencha seu nome e telefone para continuar."); return; }',
+'  if(!source){ alert("Conta pra gente como você conheceu a loja antes de continuar."); return; }',
 '  var btn = document.getElementById("checkoutBtn");',
 '  btn.disabled = true; btn.textContent = "Enviando pedido...";',
 '  var orderId = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())+"-"+Math.random().toString(36).slice(2));',
@@ -3125,6 +3150,7 @@ const CATALOG_JS = [
 '    btn.disabled = false; btn.textContent = "Finalizar pedido";',
 '    return;',
 '  }',
+'  try{ await sb.rpc("set_order_referral_source", { p_order_id: orderId, p_source: source }); }catch(e){}',
 '  try{ await sb.rpc("upsert_customer", { p_name: name, p_phone: phone, p_email: null, p_birth_day: null, p_birth_month: null, p_cpf: null }); }catch(e){}',
 '  var lines = cart.map(function(it){ return "- "+it.name+" (Tam "+it.size+") x"+it.qty+" — "+money(lineUnitPrice(it)*it.qty); });',
 '  var total = (res.data && res.data.total!=null) ? res.data.total : cartSubtotal();',
@@ -3141,7 +3167,9 @@ const CATALOG_JS = [
 '  if(cart.length===0) return;',
 '  var name = (document.getElementById("chk_name").value||"").trim();',
 '  var phone = (document.getElementById("chk_phone").value||"").trim();',
+'  var source = (document.getElementById("chk_source").value||"").trim();',
 '  if(!name || !phone){ alert("Preencha seu nome e telefone para continuar."); return; }',
+'  if(!source){ alert("Conta pra gente como você conheceu a loja antes de continuar."); return; }',
 '  var handle = CATALOG.settings.infinitepay_handle;',
 '  if(!handle){ alert("Pagamento por cartão ainda não configurado pela loja."); return; }',
 '  var btn = document.getElementById("checkoutCardBtn");',
@@ -3156,6 +3184,7 @@ const CATALOG_JS = [
 '    btn.disabled = false; btn.textContent = "Pagar com cartão";',
 '    return;',
 '  }',
+'  try{ await sb.rpc("set_order_referral_source", { p_order_id: orderId, p_source: source }); }catch(e){}',
 '  try{ await sb.rpc("upsert_customer", { p_name: name, p_phone: phone, p_email: null, p_birth_day: null, p_birth_month: null, p_cpf: null }); }catch(e){}',
 '  var chargeTotal = (res.data && res.data.total!=null) ? res.data.total : cartSubtotal();',
 '  var itemCount = cart.filter(function(it){return !it.isGift;}).reduce(function(s,it){return s+it.qty;},0);',
