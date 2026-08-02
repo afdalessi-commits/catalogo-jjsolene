@@ -1315,8 +1315,8 @@ function labelTagHtml(p, sizeRow, settings){
   if(contact.length){ html += '<div class="tag-contact">'+contact.join(' &nbsp;|&nbsp; ')+'</div>'; }
   if(settings.exchange_policy_text){ html += '<div class="tag-policy">'+escapeHtml(settings.exchange_policy_text)+'</div>'; }
   html += '<div class="tag-thanks">Obrigada por escolher a '+escapeHtml(settings.store_name||'')+'!</div>';
+  html += '<div class="tag-cut-dot left"></div><div class="tag-cut-dot right"></div>';
   html += '</div>';
-  html += '<div class="tag-cut"><span></span><span></span></div>';
   html += '<div class="tag-bottom">';
   html += '<div class="tag-price-label">PREÇO</div>';
   html += '<div class="tag-price">'+fmtMoney(p.sale_price)+'</div>';
@@ -1337,13 +1337,13 @@ function printLabelSheet(entries){
   html += '@page{ size:50mm 75mm; margin:0; }';
   html += '*{box-sizing:border-box;}';
   html += 'body{margin:0;font-family:"Poppins",sans-serif;color:#2b1a1f;}';
-  html += '.tag{width:50mm;height:75mm;page-break-after:always;position:relative;padding:2mm 2.5mm;display:flex;flex-direction:column;align-items:center;text-align:center;font-size:2.1mm;line-height:1.1;overflow:hidden;}';
+  html += '.tag{width:50mm;height:75mm;page-break-after:always;position:relative;display:flex;flex-direction:column;align-items:center;text-align:center;font-size:2.1mm;line-height:1.1;overflow:hidden;box-sizing:border-box;}';
   html += '.tag-hole{width:2.5mm;height:2.5mm;border-radius:50%;border:0.3mm solid #ccc;margin-bottom:0.6mm;flex:none;}';
-  html += '.tag-top{display:flex;flex-direction:column;align-items:center;width:100%;}';
+  html += '.tag-top{height:50mm;box-sizing:border-box;padding:2mm 2.5mm;flex:none;display:flex;flex-direction:column;align-items:center;width:100%;overflow:hidden;position:relative;border-bottom:0.3mm dashed #bbb;}';
   html += '.tag-logo{max-width:22mm;max-height:7mm;object-fit:contain;margin-bottom:0.3mm;}';
   html += '.tag-store-name{font-family:"Playfair Display",serif;font-weight:700;font-size:4.5mm;color:#6b1f33;line-height:1.1;}';
-  html += '.tag-tagline{font-size:1.5mm;letter-spacing:0.4mm;color:#8a7568;margin-bottom:0.4mm;text-transform:uppercase;line-height:1.1;}';
-  html += '.tag-divider{width:100%;border-top:0.2mm solid #ddd;margin:0.5mm 0;flex:none;}';
+  html += '.tag-tagline{font-size:1.5mm;letter-spacing:0.4mm;color:#8a7568;margin-bottom:0.2mm;text-transform:uppercase;line-height:1.1;}';
+  html += '.tag-divider{width:100%;border-top:0.2mm solid #ddd;margin:0.3mm 0;flex:none;}';
   html += '.tag-pname{font-weight:700;font-size:2.6mm;align-self:flex-start;margin-bottom:0.3mm;line-height:1.1;}';
   html += '.tag-specs{width:100%;border-collapse:collapse;font-size:1.8mm;line-height:1;}';
   html += '.tag-specs td{padding:0.15mm 0;text-align:left;}';
@@ -1356,9 +1356,10 @@ function printLabelSheet(entries){
   html += '.tag-contact{font-size:1.6mm;line-height:1.15;}';
   html += '.tag-policy{font-size:1.6mm;margin-top:0.3mm;line-height:1.15;}';
   html += '.tag-thanks{font-family:"Dancing Script",cursive;font-size:2.6mm;color:#6b1f33;margin-top:0.5mm;line-height:1.15;}';
-  html += '.tag-cut{width:100%;border-top:0.3mm dashed #bbb;margin:0.8mm 0;position:relative;display:flex;justify-content:space-between;flex:none;}';
-  html += '.tag-cut span{width:2mm;height:2mm;border-radius:50%;background:#fff;border:0.3mm solid #bbb;margin-top:-1.15mm;}';
-  html += '.tag-bottom{display:flex;flex-direction:column;align-items:center;width:100%;}';
+  html += '.tag-cut-dot{position:absolute;bottom:-1mm;width:2mm;height:2mm;border-radius:50%;background:#fff;border:0.3mm solid #bbb;}';
+  html += '.tag-cut-dot.left{left:-0.3mm;}';
+  html += '.tag-cut-dot.right{right:-0.3mm;}';
+  html += '.tag-bottom{height:25mm;box-sizing:border-box;padding:1.5mm 2.5mm;flex:none;display:flex;flex-direction:column;align-items:center;width:100%;overflow:hidden;}';
   html += '.tag-price-label{font-size:1.8mm;letter-spacing:0.4mm;color:#8a7568;line-height:1.1;}';
   html += '.tag-price{font-family:"Playfair Display",serif;font-weight:700;font-size:5mm;margin:0.5mm 0;line-height:1.1;}';
   html += '</style></head><body>' + body + '<script>window.print();<\/script></body></html>';
