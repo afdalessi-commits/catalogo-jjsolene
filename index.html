@@ -860,7 +860,7 @@ async function renderPedidos(){
   const outros = orders.filter(o=>o.status!=='pendente');
 
   let html = '<div class="page-desc">Pedidos feitos pelo catálogo público. Ao confirmar, vira venda de verdade (baixa o estoque e lança a receita). Ao cancelar, libera o estoque reservado.</div>';
-  html += '<div class="row-actions"><button class="btn outline" onclick="exportPedidosCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportPedidosPDF()">🖨️ Exportar PDF</button></div>';
+  html += '<div class="row-actions" style="margin-top:10px;"><button class="btn outline" onclick="exportPedidosCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportPedidosPDF()">🖨️ Exportar PDF</button></div>';
   html += '<div class="section-title">Aguardando confirmação ('+pendentes.length+')</div>';
   if(pendentes.length===0){
     html += '<div class="empty">Nenhum pedido pendente.</div>';
@@ -952,7 +952,7 @@ async function renderEstoque(){
   const isComercial = currentProfile && currentProfile.role==='comercial';
   let html = '<div class="page-desc">'+(isComercial ? 'Consulta de estoque disponível.' : 'Cadastre produtos, fotos, tamanhos e quantidades. O estoque é atualizado automaticamente por Compras, Vendas e Pedidos do catálogo.')+'</div>';
   if(!isComercial){ html += '<button class="btn" onclick="openProductForm()">+ Novo produto</button>'; }
-  html += '<div class="row-actions"><button class="btn outline" onclick="exportEstoqueCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportEstoquePDF()">🖨️ Exportar PDF</button></div>';
+  html += '<div class="row-actions" style="margin-top:10px;"><button class="btn outline" onclick="exportEstoqueCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportEstoquePDF()">🖨️ Exportar PDF</button></div>';
   html += '<div class="section-title">Produtos cadastrados ('+products.length+')</div>';
   if(products.length===0){
     html += '<div class="empty">Nenhum produto cadastrado ainda. Clique em "+ Novo produto" para começar.</div>';
@@ -1451,7 +1451,7 @@ async function renderCompras(){
   purchasesCache = purchases;
   let html = '<div class="page-desc">Registre pedidos de compra a fornecedores. Ao marcar como recebido, o estoque e o financeiro são atualizados automaticamente.</div>';
   html += '<button class="btn" onclick="openPurchaseForm()">+ Nova compra</button>';
-  html += '<div class="row-actions"><button class="btn outline" onclick="exportComprasCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportComprasPDF()">🖨️ Exportar PDF</button></div>';
+  html += '<div class="row-actions" style="margin-top:10px;"><button class="btn outline" onclick="exportComprasCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportComprasPDF()">🖨️ Exportar PDF</button></div>';
   html += '<div class="section-title">Histórico de compras ('+purchases.length+')</div>';
   if(purchases.length===0){
     html += '<div class="empty">Nenhuma compra registrada ainda.</div>';
@@ -1599,7 +1599,7 @@ async function renderFornecedores(){
   const fornecedores = await getFornecedores(true);
   let html = '<div class="page-desc">Cadastro de fornecedores — nome, contato, telefone e endereço. Usado para preencher automaticamente o campo "Fornecedor" em Compras.</div>';
   html += '<button class="btn" onclick="openFornecedorForm()">+ Adicionar fornecedor</button>';
-  html += '<div class="row-actions"><button class="btn outline" onclick="exportFornecedoresCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportFornecedoresPDF()">🖨️ Exportar PDF</button></div>';
+  html += '<div class="row-actions" style="margin-top:10px;"><button class="btn outline" onclick="exportFornecedoresCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportFornecedoresPDF()">🖨️ Exportar PDF</button></div>';
   html += '<div class="section-title">Fornecedores (' + fornecedores.length + ')</div>';
   if(fornecedores.length===0){
     html += '<div class="empty">Nenhum fornecedor cadastrado ainda.</div>';
@@ -1687,7 +1687,7 @@ async function renderVendas(){
   salesCache = sales;
   let html = '<div class="page-desc">Registre vendas feitas fora do catálogo (loja física, direto no WhatsApp, etc). O estoque é reduzido automaticamente e uma receita é lançada no financeiro.</div>';
   html += '<button class="btn" onclick="openSaleForm()">+ Nova venda</button>';
-  html += '<div class="row-actions"><button class="btn outline" onclick="exportVendasCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportVendasPDF()">🖨️ Exportar PDF</button></div>';
+  html += '<div class="row-actions" style="margin-top:10px;"><button class="btn outline" onclick="exportVendasCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportVendasPDF()">🖨️ Exportar PDF</button></div>';
   html += '<div class="section-title">'+(isComercial?'Minhas vendas':'Histórico de vendas')+' ('+sales.length+')</div>';
   if(sales.length===0){
     html += '<div class="empty">Nenhuma venda registrada ainda.</div>';
@@ -1870,7 +1870,7 @@ async function renderVendedores(){
 
   let html = '<div class="page-desc">Cadastre o(a)s vendedor(es) e a % de comissão de cada um(a). Ao lançar uma venda manual (aba Vendas), escolha o(a) vendedor(a) responsável. Vendas feitas pelo link do catálogo dele(a) (com o cupom) também entram na comissão automaticamente — a comissão total é calculada no fechamento abaixo.</div>';
   html += '<button class="btn" onclick="openSellerForm()">+ Novo(a) vendedor(a)</button>';
-  html += '<div class="row-actions"><button class="btn outline" onclick="exportVendedoresCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportVendedoresPDF()">🖨️ Exportar PDF</button></div>';
+  html += '<div class="row-actions" style="margin-top:10px;"><button class="btn outline" onclick="exportVendedoresCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportVendedoresPDF()">🖨️ Exportar PDF</button></div>';
   html += '<div class="section-title">Vendedor(es) ('+sellers.length+')</div>';
   if(sellers.length===0){
     html += '<div class="empty">Nenhum(a) vendedor(a) cadastrado(a) ainda.</div>';
@@ -2070,7 +2070,7 @@ async function renderClientes(){
   customersLiteCache = customers;
   let html = '<div class="page-desc">Cadastrados automaticamente quando um cliente finaliza um pedido no catálogo — ou adicione manualmente aqui (ex: cliente que comprou na loja física). Mostra saldo de cashback e permite conferir contato.</div>';
   html += '<button class="btn" onclick="openCustomerForm()">+ Adicionar cliente</button>';
-  html += '<div class="row-actions"><button class="btn outline" onclick="exportClientesCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportClientesPDF()">🖨️ Exportar PDF</button></div>';
+  html += '<div class="row-actions" style="margin-top:10px;"><button class="btn outline" onclick="exportClientesCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportClientesPDF()">🖨️ Exportar PDF</button></div>';
   html += '<div class="section-title">Clientes (' + customers.length + ')</div>';
   if(customers.length===0){
     html += '<div class="empty">Nenhum cliente cadastrado ainda.</div>';
