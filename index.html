@@ -961,11 +961,35 @@ function pedidoCardHtml(o, settings){
   }
   html += '<div style="display:flex; justify-content:space-between; align-items:center;">';
   html += '<strong>'+fmtMoney(o.total)+'</strong>';
+  let actions = [];
   if(o.status==='pendente'){
-    html += '<div class="row-actions">'+(o.phone?'<a class="btn small outline" href="'+waLink(o.phone)+'" target="_blank">💬 Chamar no WhatsApp</a>':'')+'<button class="btn small" onclick="confirmOrderAction(\''+o.id+'\')">Confirmar pagamento</button><button class="btn small danger" onclick="cancelOrderAction(\''+o.id+'\')">Cancelar</button></div>';
+    if(o.phone) actions.push('<a class="btn small outline" href="'+waLink(o.phone)+'" target="_blank">💬 Chamar no WhatsApp</a>');
+    actions.push('<button class="btn small" onclick="confirmOrderAction(\''+o.id+'\')">Confirmar pagamento</button>');
+    actions.push('<button class="btn small danger" onclick="cancelOrderAction(\''+o.id+'\')">Cancelar</button>');
   }
+  if(currentProfile && currentProfile.role==='admin'){
+    actions.push('<button class="btn small danger" onclick="deleteOrderAction(\''+o.id+'\')">Excluir</button>');
+  }
+  if(actions.length){ html += '<div class="row-actions">'+actions.join('')+'</div>'; }
   html += '</div></div>';
   return html;
+}
+async function deleteOrderAction(id){
+  if(!confirm('Excluir este pedido? Essa ação não pode ser desfeita.')) return;
+  const linkedSales = await q(SUPA.from('sales').select('id,invoice_id').eq('order_id', id));
+  const hasInvoice = linkedSales.some(s=>s.invoice_id);
+  if(hasInvoice){
+    toast('Esse pedido já virou uma venda com nota fiscal emitida e não pode ser excluído.');
+    return;
+  }
+  for(const s of linkedSales){
+    await q(SUPA.from('sale_items').delete().eq('sale_id', s.id));
+    await q(SUPA.from('sales').delete().eq('id', s.id));
+  }
+  await q(SUPA.from('order_items').delete().eq('order_id', id));
+  await q(SUPA.from('orders').delete().eq('id', id));
+  await renderPedidos();
+  toast('Pedido excluído.');
 }
 function pedidosReportData(){
   const headers = ['Data','Cliente','Status','Itens','Cupom','Total'];
@@ -1287,20 +1311,26 @@ async function saveProduct(id){
 async function deleteProduct(id){
   if(!confirm('Excluir este produto do estoque? Essa ação não pode ser desfeita.')) return;
   const { error } = await SUPA.from('products').delete().eq('id', id);
-  if(error){
-    if(error.code === '23503'){
-      if(confirm('Esse produto já tem vendas ou pedidos no histórico, então não pode ser excluído (isso apagaria registros de venda). Quer ocultar ele do catálogo em vez de excluir? Ele some da loja, mas o histórico continua intacto.')){
-        await q(SUPA.from('products').update({ show_in_catalog:false }).eq('id', id));
-        await renderEstoque();
-        toast('Produto ocultado do catálogo.');
-      }
-      return;
+  if(!error){ await renderEstoque(); toast('Produto excluído.'); return; }
+  if(error.code !== '23503'){ toast('Erro: '+error.message); return; }
+  const linkedSales = await q(SUPA.from('sale_items').select('sale_id, sales(invoice_id)').eq('product_id', id));
+  const hasInvoice = linkedSales.some(it=> it.sales && it.sales.invoice_id);
+  if(hasInvoice){
+    if(confirm('Esse produto tem venda com nota fiscal emitida e não pode ser excluído (isso apagaria o registro fiscal). Quer ocultar ele do catálogo em vez de excluir? Ele some da loja, mas o histórico continua intacto.')){
+      await q(SUPA.from('products').update({ show_in_catalog:false }).eq('id', id));
+      await renderEstoque();
+      toast('Produto ocultado do catálogo.');
     }
-    toast('Erro: '+error.message);
     return;
   }
+  if(!confirm('Esse produto tem vendas/pedidos no histórico, mas nenhum com nota fiscal emitida. Quer excluir mesmo assim? Isso remove também os itens de venda/pedido de teste vinculados a ele.')) return;
+  await q(SUPA.from('sale_items').delete().eq('product_id', id));
+  await q(SUPA.from('order_items').delete().eq('product_id', id));
+  await q(SUPA.from('bag_delivery_items').delete().eq('product_id', id));
+  const { error: err2 } = await SUPA.from('products').delete().eq('id', id);
+  if(err2){ toast('Ainda não foi possível excluir: '+err2.message); return; }
   await renderEstoque();
-  toast('Produto excluído.');
+  toast('Produto excluído, junto com os itens de venda/pedido vinculados.');
 }
 
 /* ============================================================
@@ -2070,9 +2100,16 @@ async function saveSale(){
   toast('Venda registrada. Estoque e financeiro atualizados.');
 }
 async function deleteSale(id){
-  if(!confirm('Excluir esta venda? (não reverte o estoque automaticamente)')) return;
-  const ok = await deleteRow('sales', id, { fkMessage: 'Essa venda tem uma nota fiscal ou itens vinculados e não pode ser excluída.' });
-  if(ok) await renderVendas();
+  if(!confirm('Excluir esta venda? Isso remove os itens dela também. (não reverte o estoque automaticamente)')) return;
+  const rows = await q(SUPA.from('sales').select('id,invoice_id').eq('id', id));
+  const sale = rows[0];
+  if(sale && sale.invoice_id){
+    toast('Essa venda já tem nota fiscal emitida e não pode ser excluída.');
+    return;
+  }
+  await q(SUPA.from('sale_items').delete().eq('sale_id', id));
+  const ok = await deleteRow('sales', id, { fkMessage: 'Não foi possível excluir essa venda.' });
+  if(ok){ await renderVendas(); toast('Venda excluída.'); }
 }
 
 /* ============================================================
