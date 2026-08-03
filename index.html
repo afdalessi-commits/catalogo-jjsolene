@@ -256,6 +256,19 @@ async function q(promise){
   if(error){ console.error(error); toast('Erro: ' + error.message); throw error; }
   return data;
 }
+async function deleteRow(table, id, opts){
+  opts = opts || {};
+  const { error } = await SUPA.from(table).delete().eq('id', id);
+  if(error){
+    if(error.code === '23503'){
+      toast(opts.fkMessage || 'Não é possível excluir: existem registros vinculados a este item.');
+      return false;
+    }
+    toast('Erro: '+error.message);
+    return false;
+  }
+  return true;
+}
 function openModal(html){
   document.getElementById('modalRoot').innerHTML = '<div class="modal-bg" id="modalBg"><div class="modal">'+html+'</div></div>';
   document.getElementById('modalBg').addEventListener('click', (e)=>{ if(e.target.id==='modalBg') closeModal(); });
@@ -1020,7 +1033,7 @@ async function renderEstoque(){
       else { html += '<div class="product-photo-thumb" style="display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;">sem foto</div>'; }
       html += '<div class="pname">'+escapeHtml(p.name)+'</div>';
       html += '<div class="pmeta">'+escapeHtml(categoryName(cats, p.category_id))+' · SKU '+escapeHtml(p.sku||'—')+'</div>';
-      html += '<div class="pprice">'+fmtMoney(p.sale_price)+' <span style="font-size:11px;color:var(--muted);font-weight:400;">(custo '+fmtMoney(p.cost_price)+')</span></div>';
+      html += '<div class="pprice">'+fmtMoney(p.sale_price)+(isComercial?'':' <span style="font-size:11px;color:var(--muted);font-weight:400;">(custo '+fmtMoney(p.cost_price)+')</span>')+'</div>';
       html += '<div class="size-pills">';
       (p.product_sizes||[]).forEach(sz=>{
         const disp = (Number(sz.stock)||0)-(Number(sz.reserved)||0);
@@ -1273,7 +1286,19 @@ async function saveProduct(id){
 }
 async function deleteProduct(id){
   if(!confirm('Excluir este produto do estoque? Essa ação não pode ser desfeita.')) return;
-  await q(SUPA.from('products').delete().eq('id', id));
+  const { error } = await SUPA.from('products').delete().eq('id', id);
+  if(error){
+    if(error.code === '23503'){
+      if(confirm('Esse produto já tem vendas ou pedidos no histórico, então não pode ser excluído (isso apagaria registros de venda). Quer ocultar ele do catálogo em vez de excluir? Ele some da loja, mas o histórico continua intacto.')){
+        await q(SUPA.from('products').update({ show_in_catalog:false }).eq('id', id));
+        await renderEstoque();
+        toast('Produto ocultado do catálogo.');
+      }
+      return;
+    }
+    toast('Erro: '+error.message);
+    return;
+  }
   await renderEstoque();
   toast('Produto excluído.');
 }
@@ -1797,8 +1822,8 @@ async function receivePurchase(id){
 }
 async function deletePurchase(id){
   if(!confirm('Excluir esta compra? (não reverte estoque se já recebida)')) return;
-  await q(SUPA.from('purchases').delete().eq('id', id));
-  await renderCompras();
+  const ok = await deleteRow('purchases', id, { fkMessage: 'Essa compra tem itens registrados e não pode ser excluída do histórico.' });
+  if(ok) await renderCompras();
 }
 
 /* ============================================================
@@ -1884,8 +1909,8 @@ async function saveFornecedor(id){
 }
 async function deleteFornecedor(id){
   if(!confirm('Excluir este fornecedor?')) return;
-  await q(SUPA.from('fornecedores').delete().eq('id', id));
-  await renderFornecedores();
+  const ok = await deleteRow('fornecedores', id, { fkMessage: 'Esse fornecedor está vinculado a compras registradas e não pode ser excluído.' });
+  if(ok) await renderFornecedores();
 }
 
 /* ============================================================
@@ -2046,8 +2071,8 @@ async function saveSale(){
 }
 async function deleteSale(id){
   if(!confirm('Excluir esta venda? (não reverte o estoque automaticamente)')) return;
-  await q(SUPA.from('sales').delete().eq('id', id));
-  await renderVendas();
+  const ok = await deleteRow('sales', id, { fkMessage: 'Essa venda tem uma nota fiscal ou itens vinculados e não pode ser excluída.' });
+  if(ok) await renderVendas();
 }
 
 /* ============================================================
@@ -2459,7 +2484,19 @@ async function saveSeller(id){
 }
 async function deleteSeller(id){
   if(!confirm('Excluir este(a) vendedor(a)? (vendas já lançadas continuam no histórico, só perdem o vínculo com ele(a))')) return;
-  await q(SUPA.from('sellers').delete().eq('id', id));
+  const { error } = await SUPA.from('sellers').delete().eq('id', id);
+  if(error){
+    if(error.code === '23503'){
+      if(confirm('Esse(a) vendedor(a) já tem vendas, comissões, cupons ou sacolas vinculadas, então não pode ser excluído(a). Quer marcar como inativo(a) em vez disso? Ele(a) some das opções, mas o histórico continua.')){
+        await q(SUPA.from('sellers').update({ active:false }).eq('id', id));
+        await renderVendedores();
+        toast('Vendedor(a) marcado(a) como inativo(a).');
+      }
+      return;
+    }
+    toast('Erro: '+error.message);
+    return;
+  }
   await renderVendedores();
 }
 
@@ -2636,8 +2673,8 @@ async function saveCustomer(id){
 }
 async function deleteCustomer(id){
   if(!confirm('Excluir este cliente?')) return;
-  await q(SUPA.from('customers').delete().eq('id', id));
-  await renderClientes();
+  const ok = await deleteRow('customers', id, { fkMessage: 'Esse cliente tem registros vinculados (como cashback) e não pode ser excluído.' });
+  if(ok) await renderClientes();
 }
 
 /* ============================================================
@@ -2755,8 +2792,8 @@ async function saveBanner(){
 }
 async function deleteBanner(id){
   if(!confirm('Excluir este banner?')) return;
-  await q(SUPA.from('banners').delete().eq('id', id));
-  await renderMarketing();
+  const ok = await deleteRow('banners', id, { fkMessage: 'Não foi possível excluir este banner.' });
+  if(ok) await renderMarketing();
 }
 function openGiftForm(){
   const products = productsLiteCache||[];
@@ -2774,8 +2811,8 @@ async function saveGift(){
 }
 async function deleteGift(id){
   if(!confirm('Excluir esta regra?')) return;
-  await q(SUPA.from('gift_rules').delete().eq('id', id));
-  await renderMarketing();
+  const ok = await deleteRow('gift_rules', id, { fkMessage: 'Não foi possível excluir essa regra de brinde.' });
+  if(ok) await renderMarketing();
 }
 async function openCouponForm(){
   const sellers = await getSellersLite();
@@ -2805,7 +2842,19 @@ async function saveCoupon(){
 }
 async function deleteCoupon(id){
   if(!confirm('Excluir este cupom?')) return;
-  await q(SUPA.from('coupons').delete().eq('id', id));
+  const { error } = await SUPA.from('coupons').delete().eq('id', id);
+  if(error){
+    if(error.code === '23503'){
+      if(confirm('Esse cupom já foi usado em algum pedido, então não pode ser excluído. Quer desativar ele em vez disso? Ele deixa de funcionar, mas o histórico de uso continua.')){
+        await q(SUPA.from('coupons').update({ active:false }).eq('id', id));
+        await renderMarketing();
+        toast('Cupom desativado.');
+      }
+      return;
+    }
+    toast('Erro: '+error.message);
+    return;
+  }
   await renderMarketing();
 }
 async function markWaitlistNotified(id){
@@ -2907,8 +2956,8 @@ async function markFinancePaid(id){
 }
 async function deleteFinance(id){
   if(!confirm('Excluir este lançamento?')) return;
-  await q(SUPA.from('finance').delete().eq('id', id));
-  await renderFinanceiro();
+  const ok = await deleteRow('finance', id, { fkMessage: 'Não foi possível excluir este lançamento.' });
+  if(ok) await renderFinanceiro();
 }
 
 /* ---------- Despesas fixas recorrentes ---------- */
@@ -2971,7 +3020,8 @@ async function saveRecurring(id){
 }
 async function deleteRecurring(id){
   if(!confirm('Excluir esta despesa fixa?')) return;
-  await SUPA.from('recurring_expenses').delete().eq('id', id);
+  const ok = await deleteRow('recurring_expenses', id, { fkMessage: 'Essa despesa fixa já gerou lançamentos no financeiro e não pode ser excluída. Edite e desmarque "Ativa" em vez de excluir.' });
+  if(!ok) return;
   const listR = await SUPA.from('recurring_expenses').select('*').order('day_of_month');
   recurringLiteCache = listR.data||[];
   renderRecurringModal();
