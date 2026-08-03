@@ -824,13 +824,18 @@ function openSearch(){
 }
 function genericModal(innerHtml){
   var ov = document.createElement("div"); ov.className="overlay show"; ov.style.zIndex="80";
-  ov.onclick = function(e){ if(e.target===ov){ document.body.removeChild(ov); } };
   var box = document.createElement("div");
   box.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:12px;padding:18px;max-width:360px;width:90%;z-index:81;max-height:80vh;overflow:auto;";
+  function closeModalBox(){ if(ov.parentNode) document.body.removeChild(ov); if(box.parentNode) document.body.removeChild(box); }
+  ov.onclick = function(e){ if(e.target===ov){ closeModalBox(); } };
+  var closeBtn = document.createElement("button"); closeBtn.type="button"; closeBtn.innerHTML="✕";
+  closeBtn.style.cssText = "position:absolute;top:6px;right:10px;background:none;border:none;font-size:20px;line-height:1;color:#8a7568;cursor:pointer;padding:4px;";
+  closeBtn.onclick = closeModalBox;
   box.innerHTML = innerHtml;
+  box.appendChild(closeBtn);
   document.body.appendChild(ov);
   document.body.appendChild(box);
-  return { overlay: ov, box: box, close: function(){ if(ov.parentNode) document.body.removeChild(ov); if(box.parentNode) document.body.removeChild(box); } };
+  return { overlay: ov, box: box, close: closeModalBox };
 }
 function openMyOrders(){
   var m = genericModal("<div class=\"myorders-box\"><strong>Meus pedidos</strong><p style=\"color:#8a7568;\">Digite o telefone usado na compra para ver seu histórico e saldo de cashback.</p><input id=\"mo_phone\" placeholder=\"Seu telefone (com DDD)\"><button class=\"checkout-btn\" id=\"mo_btn\" style=\"margin-top:0;\">Consultar</button><div id=\"mo_result\"></div></div>");
