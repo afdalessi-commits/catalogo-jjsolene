@@ -1323,14 +1323,31 @@ async function deleteProduct(id){
     }
     return;
   }
-  if(!confirm('Esse produto tem vendas/pedidos no histórico, mas nenhum com nota fiscal emitida. Quer excluir mesmo assim? Isso remove também os itens de venda/pedido de teste vinculados a ele.')) return;
+  if(!confirm('Esse produto tem vendas/pedidos no histórico, mas nenhum com nota fiscal emitida. Quer excluir mesmo assim? Isso remove também os itens de venda/pedido de teste vinculados a ele, e qualquer venda/pedido que fique vazio por causa disso.')) return;
+  const affectedSaleIds = [...new Set(linkedSales.map(it=>it.sale_id))];
+  const linkedOrderItems = await q(SUPA.from('order_items').select('id, order_id').eq('product_id', id));
+  const affectedOrderIds = [...new Set(linkedOrderItems.map(it=>it.order_id))];
+
   await q(SUPA.from('sale_items').delete().eq('product_id', id));
   await q(SUPA.from('order_items').delete().eq('product_id', id));
   await q(SUPA.from('bag_delivery_items').delete().eq('product_id', id));
+
+  for(const saleId of affectedSaleIds){
+    const remaining = await q(SUPA.from('sale_items').select('id').eq('sale_id', saleId));
+    if(remaining.length===0){ await q(SUPA.from('sales').delete().eq('id', saleId)); }
+  }
+  for(const orderId of affectedOrderIds){
+    const remaining = await q(SUPA.from('order_items').select('id').eq('order_id', orderId));
+    if(remaining.length===0){
+      const stillLinkedSales = await q(SUPA.from('sales').select('id,invoice_id').eq('order_id', orderId));
+      if(!stillLinkedSales.some(s=>s.invoice_id)){ await q(SUPA.from('orders').delete().eq('id', orderId)); }
+    }
+  }
+
   const { error: err2 } = await SUPA.from('products').delete().eq('id', id);
   if(err2){ toast('Ainda não foi possível excluir: '+err2.message); return; }
   await renderEstoque();
-  toast('Produto excluído, junto com os itens de venda/pedido vinculados.');
+  toast('Produto excluído, junto com vendas/pedidos de teste vinculados que ficaram vazios.');
 }
 
 /* ============================================================
