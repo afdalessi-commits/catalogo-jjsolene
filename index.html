@@ -219,6 +219,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>
 /* ============================================================
    JJ SOLENE — SISTEMA DE GESTÃO (v2 — banco de dados na nuvem)
@@ -735,6 +736,61 @@ function kpiCard(label, value, altOrDanger){
 let agendaViewDate = new Date();
 let agendaTasksCache = [];
 
+/* ---------- Google Calendar (sincronização Agenda → Google, um sentido) ---------- */
+let googleAccessToken = null;
+let googleTokenExpiresAt = 0;
+function isGoogleConnected(){ return !!googleAccessToken && Date.now() < googleTokenExpiresAt; }
+async function connectGoogleCalendar(){
+  const s = await getSettings();
+  if(!s.google_client_id){ toast('Configure o ID do cliente Google em Configurações → Integrações antes de conectar.'); return; }
+  if(typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2){ toast('Não foi possível carregar o login do Google agora. Recarregue a página e tente de novo.'); return; }
+  const client = google.accounts.oauth2.initTokenClient({
+    client_id: s.google_client_id,
+    scope: 'https://www.googleapis.com/auth/calendar.events',
+    callback: function(resp){
+      if(resp.error){ toast('Não foi possível conectar ao Google: '+resp.error); return; }
+      googleAccessToken = resp.access_token;
+      googleTokenExpiresAt = Date.now() + (Number(resp.expires_in)||3600)*1000 - 30000;
+      toast('Google Calendar conectado! Suas próximas tarefas vão sincronizar.');
+      renderAgendaHTML();
+    }
+  });
+  client.requestAccessToken();
+}
+async function googleSyncTask(task){
+  if(!isGoogleConnected() || !task) return;
+  try{
+    const event = { summary: task.title, description: task.description||'' };
+    if(task.due_time){
+      const hhmm = task.due_time.slice(0,5);
+      const end = new Date(task.due_date+'T'+hhmm+':00');
+      end.setHours(end.getHours()+1);
+      event.start = { dateTime: task.due_date+'T'+hhmm+':00', timeZone:'America/Sao_Paulo' };
+      event.end = { dateTime: end.toISOString().slice(0,19), timeZone:'America/Sao_Paulo' };
+    } else {
+      const end = new Date(task.due_date+'T00:00:00');
+      end.setDate(end.getDate()+1);
+      event.start = { date: task.due_date };
+      event.end = { date: end.toISOString().slice(0,10) };
+    }
+    const hasEvent = !!task.google_event_id;
+    const url = hasEvent
+      ? 'https://www.googleapis.com/calendar/v3/calendars/primary/events/'+task.google_event_id
+      : 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
+    const resp = await fetch(url, { method: hasEvent?'PATCH':'POST', headers:{ 'Authorization':'Bearer '+googleAccessToken, 'Content-Type':'application/json' }, body: JSON.stringify(event) });
+    const data = await resp.json();
+    if(resp.ok && data.id && data.id !== task.google_event_id){
+      await SUPA.from('tasks').update({ google_event_id: data.id }).eq('id', task.id);
+    }
+  }catch(e){ console.error('Erro ao sincronizar com Google Calendar:', e); }
+}
+async function googleDeleteEvent(eventId){
+  if(!isGoogleConnected() || !eventId) return;
+  try{
+    await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events/'+eventId, { method:'DELETE', headers:{ 'Authorization':'Bearer '+googleAccessToken } });
+  }catch(e){ console.error('Erro ao excluir evento do Google Calendar:', e); }
+}
+
 async function renderAgenda(){
   const el = document.getElementById('tab-agenda');
   el.innerHTML = '<div class="empty">Carregando...</div>';
@@ -758,6 +814,7 @@ function renderAgendaHTML(){
   html += '<div class="cal-month-label">'+monthLabel.charAt(0).toUpperCase()+monthLabel.slice(1)+'</div>';
   html += '<button class="btn small outline" onclick="agendaChangeMonth(1)">Próximo mês ›</button>';
   html += '<button class="btn small" onclick="openTaskForm(\''+todayStr+'\')">+ Nova tarefa</button>';
+  html += '<button class="btn small outline" onclick="connectGoogleCalendar()">'+(isGoogleConnected()?'✅ Google Calendar conectado':'🔗 Conectar Google Calendar')+'</button>';
   html += '</div>';
 
   html += '<div class="cal-grid">';
@@ -865,19 +922,21 @@ async function saveTask(id){
   btn.disabled = true; btn.textContent = 'Salvando...';
   let r;
   if(id){
-    r = await SUPA.from('tasks').update(payload).eq('id', id);
+    r = await SUPA.from('tasks').update(payload).eq('id', id).select();
   } else {
     payload.owner_id = currentUser.id;
-    r = await SUPA.from('tasks').insert([payload]);
+    r = await SUPA.from('tasks').insert([payload]).select();
   }
   if(r.error){
     btn.disabled = false; btn.textContent = 'Salvar';
     toast('Erro: '+r.error.message);
     return;
   }
+  const savedTask = r.data[0];
   closeModal();
   await renderAgenda();
   toast('Tarefa salva.');
+  if(isGoogleConnected()){ googleSyncTask(savedTask); }
 }
 async function toggleTaskDone(id, done){
   await q(SUPA.from('tasks').update({ done }).eq('id', id));
@@ -885,7 +944,9 @@ async function toggleTaskDone(id, done){
 }
 async function deleteTask(id){
   if(!confirm('Excluir esta tarefa?')) return;
+  const existing = agendaTasksCache.find(function(t){ return t.id===id; });
   await q(SUPA.from('tasks').delete().eq('id', id));
+  if(existing && existing.google_event_id){ googleDeleteEvent(existing.google_event_id); }
   closeModal();
   await renderAgenda();
 }
@@ -4501,6 +4562,11 @@ async function renderConfig(){
   html += '</div>';
   html += '</div>';
 
+  html += '<div class="form-block"><h4>Integrações</h4>';
+  html += '<div class="note">Conecte a Agenda com o Google Calendar: cada tarefa criada/editada/excluída no sistema é refletida na sua conta Google (só nesse sentido — o que você cria direto no Google não volta pro sistema). Cada pessoa conecta a própria conta clicando em "Conectar Google Calendar" na aba Agenda.</div>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>ID do cliente OAuth do Google (Google Cloud Console)</label><input id="cf_google_client" value="'+escapeHtml(s.google_client_id||'')+'" placeholder="Ex: 123456789-abc.apps.googleusercontent.com"></div>';
+  html += '</div>';
+
   html += '<div class="form-block"><h4>Atendimento personalizado (rodapé do catálogo)</h4>';
   html += '<div class="note">Opcional. Preenchendo os dois campos de uma pessoa, o botão dela aparece no rodapé do catálogo. Se deixar em branco, o rodapé usa o WhatsApp geral da loja.</div>';
   html += '<div class="form-row">';
@@ -4633,6 +4699,7 @@ async function saveConfig(){
     instagram: document.getElementById('cf_ig').value.trim(),
     website_url: document.getElementById('cf_website').value.trim(),
     exchange_policy_text: document.getElementById('cf_exchange').value.trim(),
+    google_client_id: document.getElementById('cf_google_client').value.trim(),
     whatsapp: document.getElementById('cf_wpp').value.trim(),
     delivery_text: document.getElementById('cf_delivery').value.trim(),
     pix_key: document.getElementById('cf_pix').value.trim(),
