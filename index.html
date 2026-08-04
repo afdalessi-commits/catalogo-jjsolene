@@ -120,7 +120,7 @@
   .items-editor .item-line{display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:8px;margin-bottom:8px;align-items:center;font-size:12.5px;}
   .items-editor .total-line{text-align:right;font-weight:700;color:var(--wine-dark);margin-top:6px;font-size:14px;}
   .hidden{display:none !important;}
-  .switch{position:relative;display:inline-block;width:38px;height:21px;}
+  .switch{position:relative;display:inline-block;width:38px;height:21px;flex-shrink:0;margin-top:1px;}
   .switch input{opacity:0;width:0;height:0;}
   .slider{position:absolute;cursor:pointer;inset:0;background:#ccc;border-radius:999px;transition:.2s;}
   .slider:before{content:"";position:absolute;height:15px;width:15px;left:3px;bottom:3px;background:white;border-radius:50%;transition:.2s;}
@@ -950,7 +950,7 @@ function openTaskForm(dateStr, id){
   html += '<div class="field" style="margin-bottom:8px;"><label>Prioridade</label><select id="tk_priority"><option value="alta"'+(t.priority==='alta'?' selected':'')+'>Alta</option><option value="media"'+(t.priority==='media'?' selected':'')+'>Média</option><option value="baixa"'+(t.priority==='baixa'?' selected':'')+'>Baixa</option></select></div>';
   html += '<div class="field" style="margin-bottom:8px;"><label>Descrição (opcional)</label><textarea id="tk_desc" rows="2">'+escapeHtml(t.description||'')+'</textarea></div>';
   if(isAdmin){
-    html += '<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px;"><label class="switch"><input type="checkbox" id="tk_shared" '+(t.visibility==='shared'?'checked':'')+'><span class="slider"></span></label> Compartilhar com outros administradores (ex: reunião da empresa)</label>';
+    html += '<label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;margin-bottom:14px;line-height:1.5;"><label class="switch"><input type="checkbox" id="tk_shared" '+(t.visibility==='shared'?'checked':'')+'><span class="slider"></span></label> Compartilhar com outros administradores (ex: reunião da empresa)</label>';
   }
   html += '<div class="row-actions"><button class="btn" id="tk_save_btn" onclick="saveTask('+(id?"'"+id+"'":'null')+')">Salvar</button><button class="btn outline" onclick="closeModal()">Cancelar</button></div>';
   openModal(html);
@@ -1370,7 +1370,7 @@ async function openProductForm(id){
   html += '<div class="field"><label>Valor do desconto</label><input id="f_disc_value" type="number" step="0.01" value="'+(p.discount_value||0)+'"></div>';
   html += '<div class="field"><label>Qtd. mínima</label><input id="f_disc_minqty" type="number" min="1" value="'+(p.discount_min_qty||1)+'"></div>';
   html += '</div>';
-  html += '<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:10px 0;"><label class="switch"><input type="checkbox" id="f_inst_override" onchange="document.getElementById(\'f_inst_fields\').classList.toggle(\'hidden\', !this.checked)" '+(p.installments_override?'checked':'')+'><span class="slider"></span></label> Personalizar parcelamento deste produto (em vez de usar a regra geral)</label>';
+  html += '<label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;margin:10px 0;line-height:1.5;"><label class="switch"><input type="checkbox" id="f_inst_override" onchange="document.getElementById(\'f_inst_fields\').classList.toggle(\'hidden\', !this.checked)" '+(p.installments_override?'checked':'')+'><span class="slider"></span></label> Personalizar parcelamento deste produto (em vez de usar a regra geral)</label>';
   html += '<div id="f_inst_fields" class="'+(p.installments_override?'':'hidden')+'">';
   html += '<div class="form-row">';
   html += '<div class="field"><label>Parcelas sem juros (até)</label><input id="f_inst_free" type="number" min="0" max="12" value="'+(p.installments_free_max!=null?p.installments_free_max:3)+'"></div>';
@@ -1387,8 +1387,8 @@ async function openProductForm(id){
   html += '</div>';
   html += '<div class="field" style="margin-bottom:8px;"><label>Descrição (aparece no catálogo)</label><textarea id="f_desc" rows="2">'+escapeHtml(p.description||'')+'</textarea></div>';
   html += '<div class="field" style="margin-bottom:8px;"><label>Selo/promoção (opcional, ex: "Últimas peças")</label><input id="f_promo" value="'+escapeHtml(p.promo_text||'')+'"></div>';
-  html += '<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:10px;"><label class="switch"><input type="checkbox" id="f_showcat" '+(p.show_in_catalog!==false?'checked':'')+'><span class="slider"></span></label> Exibir este produto no catálogo público</label>';
-  html += '<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:8px;"><label class="switch"><input type="checkbox" id="f_keep_soldout" '+(p.keep_visible_sold_out?'checked':'')+'><span class="slider"></span></label> Quando o estoque zerar, continuar aparecendo no catálogo como "Esgotado" (com o botão "Avise-me quando chegar")</label>';
+  html += '<label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;margin-bottom:10px;line-height:1.5;"><label class="switch"><input type="checkbox" id="f_showcat" '+(p.show_in_catalog!==false?'checked':'')+'><span class="slider"></span></label> Exibir este produto no catálogo público</label>';
+  html += '<label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;margin-bottom:8px;line-height:1.5;"><label class="switch"><input type="checkbox" id="f_keep_soldout" '+(p.keep_visible_sold_out?'checked':'')+'><span class="slider"></span></label> Quando o estoque zerar, continuar aparecendo no catálogo como "Esgotado" (com o botão "Avise-me quando chegar")</label>';
   html += '<div class="note" style="margin-bottom:14px;">Regra padrão (desligado): assim que o estoque zerar em todos os tamanhos, o produto some do catálogo automaticamente — e a categoria também some se ficar sem nenhum produto disponível. Ligue esta opção só pras peças com potencial de venda/captação que valem continuar visíveis mesmo esgotadas.</div>';
   html += '<div class="row-actions">';
   html += '<button class="btn" id="f_save_btn" onclick="saveProduct('+(id?"'"+id+"'":'null')+')">Salvar</button>';
@@ -3069,7 +3069,7 @@ function openSellerForm(id){
   html += '<div class="field"><label>Telefone (opcional)</label><input id="sl_phone" value="'+escapeHtml(sl.phone||'')+'" placeholder="Ex: (11) 90000-0000"></div>';
   html += '<div class="field"><label>Comissão (%)</label><input id="sl_commission" type="number" step="0.01" min="0" max="100" value="'+(sl.commission_percent||0)+'"></div>';
   html += '</div>';
-  html += '<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px;"><label class="switch"><input type="checkbox" id="sl_active" '+(sl.active!==false?'checked':'')+'><span class="slider"></span></label> Vendedor(a) ativo(a)</label>';
+  html += '<label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;margin-bottom:14px;line-height:1.5;"><label class="switch"><input type="checkbox" id="sl_active" '+(sl.active!==false?'checked':'')+'><span class="slider"></span></label> Vendedor(a) ativo(a)</label>';
   html += '<div class="row-actions"><button class="btn" id="sl_save_btn" onclick="saveSeller('+(id?"'"+id+"'":'null')+')">Salvar</button><button class="btn outline" onclick="closeModal()">Cancelar</button></div>';
   openModal(html);
 }
@@ -3670,7 +3670,7 @@ function openRecurringForm(id){
   html += '<div class="field"><label>Valor (R$)</label><input id="re_amount" type="number" step="0.01" value="'+(r.amount||0)+'"></div>';
   html += '</div>';
   html += '<div class="field" style="margin-bottom:8px;"><label>Dia do vencimento (1 a 28)</label><input id="re_day" type="number" min="1" max="28" value="'+(r.day_of_month||1)+'"></div>';
-  html += '<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px;"><label class="switch"><input type="checkbox" id="re_active" '+(r.active!==false?'checked':'')+'><span class="slider"></span></label> Ativa</label>';
+  html += '<label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;margin-bottom:14px;line-height:1.5;"><label class="switch"><input type="checkbox" id="re_active" '+(r.active!==false?'checked':'')+'><span class="slider"></span></label> Ativa</label>';
   html += '<div class="row-actions"><button class="btn" onclick="saveRecurring('+(id?"'"+id+"'":'null')+')">Salvar</button><button class="btn outline" onclick="renderRecurringModal()">Voltar</button></div>';
   openModal(html);
 }
