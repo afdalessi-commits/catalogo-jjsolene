@@ -1127,14 +1127,11 @@ async function renderEstoque(){
       html += '<div class="size-pills">';
       (p.product_sizes||[]).forEach(sz=>{
         const disp = (Number(sz.stock)||0)-(Number(sz.reserved)||0);
-        html += '<span class="size-pill'+(disp<=2?' low':'')+'" title="Código de barras: '+escapeHtml(sz.barcode||'—')+'">'+escapeHtml(sz.size)+': '+disp+(sz.reserved>0?' ('+sz.reserved+' reserv.)':'')+'</span>';
+        html += '<span class="size-pill'+(disp<=2?' low':'')+'">'+escapeHtml(sz.size)+': '+disp+(sz.reserved>0?' ('+sz.reserved+' reserv.)':'')+'</span>';
       });
       html += '</div>';
-      if((p.product_sizes||[]).some(sz=>sz.barcode)){
-        html += '<div class="pmeta" style="font-size:10.5px;">🏷️ '+(p.product_sizes||[]).filter(sz=>sz.barcode).map(sz=>escapeHtml(sz.size)+': '+escapeHtml(sz.barcode)).join(' · ')+'</div>';
-      }
       html += '<div class="pmeta">Estoque total: <strong>'+total+'</strong>'+(reserved>0?' · '+reserved+' reservado(s)':'')+' · '+(p.show_in_catalog!==false?'<span class="tag ok">no catálogo</span>':'<span class="tag warn">oculto</span>')+'</div>';
-      if(!isComercial){ html += '<div class="row-actions" style="margin-top:6px;"><button class="btn small outline" onclick="openProductForm(\''+p.id+'\')">Editar</button><button class="btn small outline" onclick="openPrintLabelChooser(\''+p.id+'\')">🏷️ Etiqueta</button><button class="btn small danger" onclick="deleteProduct(\''+p.id+'\')">Excluir</button></div>'; }
+      html += '<div class="row-actions" style="margin-top:6px;"><button class="btn small outline" onclick="viewProductBarcodes(\''+p.id+'\')">Ver Código</button>'+(isComercial?'':' <button class="btn small outline" onclick="openProductForm(\''+p.id+'\')">Editar</button><button class="btn small outline" onclick="openPrintLabelChooser(\''+p.id+'\')">🏷️ Etiqueta</button><button class="btn small danger" onclick="deleteProduct(\''+p.id+'\')">Excluir</button>')+'</div>';
       html += '</div>';
     });
     html += '</div>';
@@ -1432,6 +1429,24 @@ async function saveProduct(id){
   } catch(e){
     btn.disabled = false; btn.textContent = 'Salvar';
   }
+}
+async function viewProductBarcodes(id){
+  const rows = await q(SUPA.from('products').select('name, product_sizes(size,barcode)').eq('id', id));
+  const p = rows[0];
+  if(!p) return;
+  let html = '<h3>Códigos de barras — '+escapeHtml(p.name)+'</h3>';
+  const sizes = (p.product_sizes||[]).slice().sort((a,b)=> a.size.localeCompare(b.size));
+  if(sizes.length===0){
+    html += '<div class="empty">Nenhum tamanho cadastrado.</div>';
+  } else {
+    html += '<div class="card"><table><tr><th>Tamanho</th><th>Código de barras</th></tr>';
+    sizes.forEach(function(sz){
+      html += '<tr><td>'+escapeHtml(sz.size)+'</td><td>'+escapeHtml(sz.barcode||'—')+'</td></tr>';
+    });
+    html += '</table></div>';
+  }
+  html += '<div class="row-actions" style="margin-top:14px;"><button class="btn outline" onclick="closeModal()">Fechar</button></div>';
+  openModal(html);
 }
 async function deleteProduct(id){
   if(!confirm('Excluir este produto do estoque? Essa ação não pode ser desfeita.')) return;
