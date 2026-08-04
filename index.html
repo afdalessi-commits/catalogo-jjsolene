@@ -6,6 +6,7 @@
 <title>JJ Solene — Sistema de Gestão</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css">
 <style>
   :root{
     --wine:#6b1f33; --wine-dark:#4a1523; --wine-light:#8a3350; --gold:#c9a15a;
@@ -128,7 +129,7 @@
   .ncm-suggestion-item strong{color:var(--wine);}
   .products-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px;}
   .product-card{background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:6px;}
-  .product-photo-thumb{width:100%;aspect-ratio:3/2;object-fit:cover;border-radius:10px;background:#eee2d3;}
+  .product-photo-thumb{width:100%;aspect-ratio:4/5;object-fit:cover;border-radius:10px;background:#eee2d3;}
   .product-card .pname{font-weight:700;font-size:14px;color:var(--wine-dark);}
   .product-card .pmeta{font-size:11.5px;color:var(--muted);}
   .product-card .pprice{font-weight:700;color:var(--wine);font-size:15px;}
@@ -225,6 +226,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
 <script>
 /* ============================================================
    JJ SOLENE — SISTEMA DE GESTÃO (v2 — banco de dados na nuvem)
@@ -1178,6 +1180,7 @@ async function openProductForm(id){
     media = await q(SUPA.from('product_media').select('*').eq('product_id', id).order('sort_order'));
   }
   window._currentProductMedia = media;
+  window._croppedPhotoBlob = null;
   const catOptions = cats.map(c=>'<option value="'+c.id+'"'+(c.id===p.category_id?' selected':'')+'>'+escapeHtml(c.icon+' '+c.name)+'</option>').join('');
   const sizesStr = (p.product_sizes||[]).map(s=> s.size+':'+s.stock+(s.barcode?':'+s.barcode:'')).join(', ');
   let html = '<h3>'+(id?'Editar produto':'Novo produto')+'</h3>';
@@ -1234,7 +1237,7 @@ async function openProductForm(id){
   html += '</div>';
   html += '<div class="field" style="margin-bottom:8px;"><label>Taxa de juros ao mês (%) — usada só nas parcelas além do limite sem juros</label><input id="f_inst_rate" type="number" min="0" step="0.01" value="'+(p.installments_interest_rate||0)+'"></div>';
   html += '</div>';
-  html += '<div class="field" style="margin-bottom:8px;"><label>Foto principal (aparece na listagem)</label><input type="file" id="f_photo" accept="image/*" onchange="previewPhoto(this)">';
+  html += '<div class="field" style="margin-bottom:8px;"><label>Foto principal (aparece na listagem — moldura fixa 4:5, ajuste o enquadramento ao selecionar)</label><input type="file" id="f_photo" accept="image/*" onchange="openPhotoCropper(this)">';
   html += '<img id="f_photo_preview" class="upload-preview'+(p.image_url?'':' hidden')+'" src="'+escapeHtml(p.image_url||'')+'"></div>';
   html += '<div class="field" style="margin-bottom:8px;"><label>Galeria de fotos/vídeos do catálogo (várias imagens ou um link de vídeo)</label>';
   html += '<div id="f_media_gallery" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;">'+renderMediaGalleryThumbs(media)+'</div>';
@@ -1296,12 +1299,39 @@ function addVideoToGallery(){
   document.getElementById('f_media_gallery').innerHTML = renderMediaGalleryThumbs(window._currentProductMedia);
   input.value = '';
 }
-function previewPhoto(input){
+function openPhotoCropper(input){
   const file = input.files[0];
   if(!file) return;
-  const img = document.getElementById('f_photo_preview');
-  img.src = URL.createObjectURL(file);
-  img.classList.remove('hidden');
+  const url = URL.createObjectURL(file);
+  openPhotoCropOverlay(url, function(blob){
+    window._croppedPhotoBlob = blob;
+    const img = document.getElementById('f_photo_preview');
+    img.src = URL.createObjectURL(blob);
+    img.classList.remove('hidden');
+  });
+}
+function openPhotoCropOverlay(imageUrl, onConfirm){
+  let root = document.getElementById('cropperOverlayRoot');
+  if(!root){ root = document.createElement('div'); root.id = 'cropperOverlayRoot'; document.body.appendChild(root); }
+  root.innerHTML = '<div class="modal-bg" style="z-index:300;"><div class="modal" style="max-width:340px;">'
+    + '<h3>Ajustar foto (moldura 4:5)</h3>'
+    + '<div class="note">Arraste a imagem pra posicionar e use a roda do mouse (ou pinça no celular) pra dar zoom. A moldura mostra exatamente como a foto vai aparecer no catálogo.</div>'
+    + '<div style="width:280px;height:350px;margin:12px auto;overflow:hidden;background:#eee;border-radius:8px;"><img id="cropperImage" src="'+imageUrl+'" style="max-width:100%;display:block;"></div>'
+    + '<div class="row-actions"><button class="btn" id="cropConfirmBtn">Usar esta foto</button><button class="btn outline" id="cropCancelBtn">Cancelar</button></div>'
+    + '</div></div>';
+  const imgEl = document.getElementById('cropperImage');
+  const cropper = new Cropper(imgEl, { aspectRatio: 4/5, viewMode: 1, dragMode: 'move', autoCropArea: 1, background: false, guides: false, center: false });
+  document.getElementById('cropConfirmBtn').onclick = function(){
+    cropper.getCroppedCanvas({ width:1080, height:1350 }).toBlob(function(blob){
+      cropper.destroy();
+      root.innerHTML = '';
+      onConfirm(blob);
+    }, 'image/jpeg', 0.9);
+  };
+  document.getElementById('cropCancelBtn').onclick = function(){
+    cropper.destroy();
+    root.innerHTML = '';
+  };
 }
 function parseSizesInput(str){
   return str.split(',').map(s=>s.trim()).filter(Boolean).map(s=>{
@@ -1393,9 +1423,11 @@ async function saveProduct(id){
       ));
     }
     const fileInput = document.getElementById('f_photo');
-    const file = fileInput && fileInput.files[0];
+    const croppedBlob = window._croppedPhotoBlob;
+    const file = croppedBlob || (fileInput && fileInput.files[0]);
     if(file){
-      const path = productId + '/' + Date.now() + '_' + file.name.replace(/[^a-zA-Z0-9.\-_]/g,'_');
+      const fileName = croppedBlob ? 'foto.jpg' : file.name;
+      const path = productId + '/' + Date.now() + '_' + fileName.replace(/[^a-zA-Z0-9.\-_]/g,'_');
       const { error: upErr } = await SUPA.storage.from('product-images').upload(path, file, { upsert:true });
       if(upErr){
         toast('Produto salvo, mas houve erro no upload da foto: '+upErr.message);
@@ -1421,6 +1453,7 @@ async function saveProduct(id){
       await q(SUPA.from('product_media').insert([{ product_id: productId, url: v.url, media_type:'video' }]));
     }
     window._currentProductMedia = [];
+    window._croppedPhotoBlob = null;
     const isNewProduct = !id;
     closeModal();
     await renderEstoque();
@@ -3484,7 +3517,7 @@ const CATALOG_CSS = [
 '.section-head h2{font-size:20px;}',
 '.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:11px;}',
 '.pcard{background:#fff;border:1px solid #e8dcc8;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 6px 16px rgba(107,31,51,0.08);}',
-'.pimg{position:relative;aspect-ratio:3/4;background:linear-gradient(135deg,#e8dcc8,#f7efe2);display:flex;align-items:center;justify-content:center;font-family:"Playfair Display",serif;font-size:15px;color:#8a7568;text-align:center;padding:10px;border-radius:14px 14px 0 0;overflow:hidden;}',
+'.pimg{position:relative;aspect-ratio:4/5;background:linear-gradient(135deg,#e8dcc8,#f7efe2);display:flex;align-items:center;justify-content:center;font-family:"Playfair Display",serif;font-size:15px;color:#8a7568;text-align:center;padding:10px;border-radius:14px 14px 0 0;overflow:hidden;}',
 '.pimg img{width:100%;height:100%;object-fit:cover;}',
 '.pbody{padding:12px 14px 14px;display:flex;flex-direction:column;gap:6px;flex:1;}',
 '.pname{font-weight:700;font-size:14.5px;color:#4a1523;}',
