@@ -572,10 +572,11 @@ let dashValuesHidden = localStorage.getItem('jj_dash_hide_values') === '1';
 async function renderDashboard(){
   const el = document.getElementById('tab-dashboard');
   el.innerHTML = '<div class="empty">Carregando...</div>';
-  const [products, settings, pendentesOrders] = await Promise.all([
+  const [products, settings, pendentesOrders, waitlistRows] = await Promise.all([
     q(SUPA.from('products').select('id,name,cost_price,sale_price,product_sizes(size,stock,reserved)')),
     getSettings(),
-    q(SUPA.from('orders').select('id,customer,total,date').eq('status','pendente').order('date',{ascending:false}))
+    q(SUPA.from('orders').select('id,customer,total,date').eq('status','pendente').order('date',{ascending:false})),
+    q(SUPA.from('waitlist').select('*, products(name)').order('created_at',{ascending:false}))
   ]);
   const monthStart = todayISO().slice(0,7)+'-01';
   const currentMonth = Number(todayISO().slice(5,7));
@@ -642,7 +643,7 @@ async function renderDashboard(){
   const pendentesFinance = financeAll.filter(f=> f.status==='pendente');
 
   dashboardCache = {
-    settings, pendentesOrders, salesMonth, baixoEstoque, pendentesFinance,
+    settings, pendentesOrders, salesMonth, baixoEstoque, pendentesFinance, waitlistRows,
     totalCusto, totalVenda, totalVendasMes, saldo, birthdayCustomers, topCustomers, topCategories, channelStats
   };
   renderDashboardHTML();
@@ -656,7 +657,7 @@ function dMoney(v){ return dashValuesHidden ? 'R$ ••••••' : fmtMoney
 function renderDashboardHTML(){
   const el = document.getElementById('tab-dashboard');
   if(!dashboardCache || !el) return;
-  const { settings, pendentesOrders, salesMonth, baixoEstoque, pendentesFinance, totalCusto, totalVenda, totalVendasMes, saldo, birthdayCustomers, topCustomers, topCategories, channelStats } = dashboardCache;
+  const { settings, pendentesOrders, salesMonth, baixoEstoque, pendentesFinance, waitlistRows, totalCusto, totalVenda, totalVendasMes, saldo, birthdayCustomers, topCustomers, topCategories, channelStats } = dashboardCache;
 
   let html = '<div style="display:flex;justify-content:flex-end;margin-bottom:10px;">';
   html += '<button class="btn small outline" onclick="toggleDashboardValues()">'+(dashValuesHidden ? '👁️ Mostrar valores' : '🙈 Ocultar valores')+'</button>';
@@ -685,6 +686,17 @@ function renderDashboardHTML(){
     html += '<div class="card"><table><tr><th>Produto</th><th>Tamanho</th><th>Disponível</th></tr>';
     baixoEstoque.forEach(x=>{
       html += '<tr><td>'+escapeHtml(x.name)+'</td><td>'+escapeHtml(x.size)+'</td><td>'+x.disponivel+'</td></tr>';
+    });
+    html += '</table></div>';
+  }
+
+  html += '<div class="section-title">🔔 Avise-me quando chegar</div>';
+  if(waitlistRows.length===0){
+    html += '<div class="empty">Ninguém na lista ainda.</div>';
+  } else {
+    html += '<div class="card"><table><tr><th>Produto</th><th>Tamanho</th><th>Cliente</th><th>Telefone</th><th></th></tr>';
+    waitlistRows.forEach(w=>{
+      html += '<tr><td>'+escapeHtml(w.products?w.products.name:'—')+'</td><td>'+escapeHtml(w.size||'—')+'</td><td>'+escapeHtml(w.customer_name||'—')+'</td><td>'+escapeHtml(w.phone||'—')+'</td><td>'+(w.notified?'<span class="tag ok">Avisado</span>':'<button class="btn small outline" onclick="markWaitlistNotified(\''+w.id+'\')">Marcar avisado</button>')+'</td></tr>';
     });
     html += '</table></div>';
   }
@@ -3108,16 +3120,15 @@ let couponsCache = [];
 async function renderMarketing(){
   const el = document.getElementById('tab-marketing');
   el.innerHTML = '<div class="empty">Carregando...</div>';
-  const [banners, gifts, coupons, waitlistRows, products] = await Promise.all([
+  const [banners, gifts, coupons, products] = await Promise.all([
     q(SUPA.from('banners').select('*').order('sort_order')),
     q(SUPA.from('gift_rules').select('*, products(name)').order('min_total')),
     q(SUPA.from('coupons').select('*, sellers(name)').order('created_at',{ascending:false})),
-    q(SUPA.from('waitlist').select('*, products(name)').order('created_at',{ascending:false})),
     getProductsLite(true)
   ]);
   couponsCache = coupons;
 
-  let html = '<div class="page-desc">Banners do catálogo, brindes automáticos por valor de compra, cupons de desconto e a lista de "avise-me quando chegar".</div>';
+  let html = '<div class="page-desc">Banners do catálogo, brindes automáticos por valor de compra e cupons de desconto. A lista de "avise-me quando chegar" está no Dashboard.</div>';
 
   html += '<div class="section-title">🖼️ Banners do catálogo</div>';
   html += '<button class="btn small" onclick="openBannerForm()">+ Novo banner</button>';
@@ -3164,16 +3175,6 @@ async function renderMarketing(){
   else {
     html += '<div class="card" style="margin-top:6px;"><table><tr><th>Código</th><th>Desconto</th><th>Influencer</th><th>Validade</th><th>Status</th><th></th></tr>';
     generalCoupons.forEach(c=>{ html += couponRowHtml(c); });
-    html += '</table></div>';
-  }
-
-  html += '<div class="section-title">🔔 Avise-me quando chegar</div>';
-  if(waitlistRows.length===0){ html += '<div class="empty">Ninguém na lista ainda.</div>'; }
-  else {
-    html += '<div class="card"><table><tr><th>Produto</th><th>Tamanho</th><th>Cliente</th><th>Telefone</th><th></th></tr>';
-    waitlistRows.forEach(w=>{
-      html += '<tr><td>'+escapeHtml(w.products?w.products.name:'—')+'</td><td>'+escapeHtml(w.size||'—')+'</td><td>'+escapeHtml(w.customer_name||'—')+'</td><td>'+escapeHtml(w.phone||'—')+'</td><td>'+(w.notified?'<span class="tag ok">Avisado</span>':'<button class="btn small outline" onclick="markWaitlistNotified(\''+w.id+'\')">Marcar avisado</button>')+'</td></tr>';
-    });
     html += '</table></div>';
   }
 
@@ -3283,7 +3284,7 @@ async function deleteCoupon(id){
 }
 async function markWaitlistNotified(id){
   await q(SUPA.from('waitlist').update({ notified:true }).eq('id', id));
-  await renderMarketing();
+  await renderDashboard();
 }
 
 /* ============================================================
