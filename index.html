@@ -311,6 +311,39 @@ async function deleteRow(table, id, opts){
   }
   return true;
 }
+/* ---------- Seleção múltipla / ação em massa (reutilizável em qualquer lista) ---------- */
+function toggleAllCB(headerCb, cls){
+  document.querySelectorAll('.'+cls).forEach(function(cb){ cb.checked = headerCb.checked; });
+  updateBulkBar(cls);
+}
+function updateBulkBar(cls){
+  const checked = document.querySelectorAll('.'+cls+':checked').length;
+  const bar = document.getElementById(cls+'_bulkbar');
+  if(!bar) return;
+  bar.classList.toggle('hidden', checked===0);
+  const countEl = document.getElementById(cls+'_bulkcount');
+  if(countEl) countEl.textContent = checked+' selecionado(s)';
+}
+function bulkActionBarHtml(cls, label){
+  return '<div id="'+cls+'_bulkbar" class="row-actions hidden" style="margin:8px 0;align-items:center;background:#fbeecb;padding:8px 12px;border-radius:8px;">'+
+    '<span id="'+cls+'_bulkcount" style="font-size:12.5px;font-weight:600;color:var(--wine-dark);"></span>'+
+    '<button type="button" class="btn small danger" onclick="bulkDeleteRows(\''+cls+'\',\''+label.fn+'\',\''+label.text+'\')">🗑️ Excluir selecionados</button>'+
+    '</div>';
+}
+async function bulkDeleteRows(cls, deleteFnName, label){
+  const ids = Array.from(document.querySelectorAll('.'+cls+':checked')).map(function(cb){ return cb.value; });
+  if(ids.length===0){ toast('Selecione ao menos um item.'); return; }
+  if(!confirm('Excluir '+ids.length+' '+label+'(s) selecionado(s)? Essa ação não pode ser desfeita.')) return;
+  const realConfirm = window.confirm;
+  window.confirm = function(){ return true; };
+  try{
+    for(const id of ids){
+      try{ await window[deleteFnName](id); }catch(e){ console.error('Erro ao excluir em massa:', e); }
+    }
+  } finally {
+    window.confirm = realConfirm;
+  }
+}
 function openModal(html){
   document.getElementById('modalRoot').innerHTML = '<div class="modal-bg" id="modalBg"><form class="modal" autocomplete="off" onsubmit="return false;">'+html+'</form></div>';
   document.getElementById('modalBg').addEventListener('click', (e)=>{ if(e.target.id==='modalBg') closeModal(); });
@@ -1023,6 +1056,8 @@ async function renderPedidos(){
 
   let html = '<div class="page-desc">Pedidos feitos pelo catálogo público. Ao confirmar, vira venda de verdade (baixa o estoque e lança a receita). Ao cancelar, libera o estoque reservado. Pedidos pendentes vencidos são cancelados automaticamente (ver prazos em Configurações).</div>';
   html += '<div class="row-actions" style="margin-top:10px;"><button class="btn outline" onclick="exportPedidosCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportPedidosPDF()">🖨️ Exportar PDF</button></div>';
+  const isAdminPedidos = currentProfile && currentProfile.role==='admin';
+  if(isAdminPedidos){ html += bulkActionBarHtml('pedido_cb', {fn:'deleteOrderAction', text:'pedido'}); }
   html += '<div class="section-title">Aguardando confirmação ('+pendentes.length+')</div>';
   if(pendentes.length===0){
     html += '<div class="empty">Nenhum pedido pendente.</div>';
@@ -1051,8 +1086,9 @@ function elapsedLabel(ms){
 }
 function pedidoCardHtml(o, settings){
   const itemsTxt = (o.order_items||[]).map(it=> (it.products?it.products.name:'?') + ' (Tam '+it.size+') x'+it.qty).join(' · ');
+  const isAdminCard = currentProfile && currentProfile.role==='admin';
   let html = '<div class="pedido-card '+o.status+'">';
-  html += '<div class="pedido-head"><div><strong>'+escapeHtml(o.customer||'Cliente não identificado')+'</strong> · '+fmtDate(o.date)+'</div><div>'+
+  html += '<div class="pedido-head"><div>'+(isAdminCard?'<input type="checkbox" class="pedido_cb" value="'+o.id+'" onchange="updateBulkBar(\'pedido_cb\')" style="margin-right:8px;">':'')+'<strong>'+escapeHtml(o.customer||'Cliente não identificado')+'</strong> · '+fmtDate(o.date)+'</div><div>'+
     (o.status==='pendente'?'<span class="tag warn">Pendente</span>':o.status==='confirmado'?'<span class="tag ok">Confirmado</span>':'<span class="tag bad">Cancelado</span>')+
     '</div></div>';
   html += '<div class="pedido-items">'+escapeHtml(itemsTxt||'sem itens')+'</div>';
@@ -1218,6 +1254,7 @@ async function renderEstoque(){
 
   html += '<div class="section-title">Produtos cadastrados</div>';
   html += '<div class="estoque-count" id="estoqueCount"></div>';
+  if(!isComercial){ html += bulkActionBarHtml('produto_cb', {fn:'deleteProduct', text:'produto'}); }
   html += '<div class="products-grid" id="estoqueGrid"></div>';
   el.innerHTML = html;
   applyEstoqueFilters();
@@ -1287,6 +1324,7 @@ function buildEstoqueGrid(products, cats){
     const total = stockTotal(p.product_sizes);
     const reserved = reservedTotal(p.product_sizes);
     html += '<div class="product-card">';
+    if(!isComercial){ html += '<label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);margin-bottom:2px;"><input type="checkbox" class="produto_cb" value="'+p.id+'" onchange="updateBulkBar(\'produto_cb\')"> selecionar</label>'; }
     if(p.image_url){ html += '<img class="product-photo-thumb" src="'+escapeHtml(p.image_url)+'" alt="'+escapeHtml(p.name)+'">'; }
     else { html += '<div class="product-photo-thumb" style="display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;">sem foto</div>'; }
     html += '<div class="pname">'+escapeHtml(p.name)+'</div>';
@@ -2427,9 +2465,10 @@ async function renderVendas(){
   if(sales.length===0){
     html += '<div class="empty">Nenhuma venda registrada ainda.</div>';
   } else {
-    html += '<div class="card"><table><tr><th>Data</th><th>Cliente</th><th>Vendedor(a)</th><th>Itens</th><th>Total</th><th>Pagamento</th><th></th></tr>';
+    if(!isComercial){ html += bulkActionBarHtml('venda_cb', {fn:'deleteSale', text:'venda'}); }
+    html += '<div class="card"><table><tr>'+(isComercial?'':'<th style="width:24px;"><input type="checkbox" onchange="toggleAllCB(this,\'venda_cb\')"></th>')+'<th>Data</th><th>Cliente</th><th>Vendedor(a)</th><th>Itens</th><th>Total</th><th>Pagamento</th><th></th></tr>';
     sales.forEach(s=>{
-      html += '<tr><td>'+fmtDate(s.date)+'</td><td>'+escapeHtml(s.customer||'—')+'</td><td>'+escapeHtml(s.sellers?s.sellers.name:'—')+'</td><td>'+(s.sale_items||[]).length+' item(ns)</td><td>'+fmtMoney(s.total)+'</td><td>'+escapeHtml(s.payment||'—')+'</td>';
+      html += '<tr>'+(isComercial?'':'<td><input type="checkbox" class="venda_cb" value="'+s.id+'" onchange="updateBulkBar(\'venda_cb\')"></td>')+'<td>'+fmtDate(s.date)+'</td><td>'+escapeHtml(s.customer||'—')+'</td><td>'+escapeHtml(s.sellers?s.sellers.name:'—')+'</td><td>'+(s.sale_items||[]).length+' item(ns)</td><td>'+fmtMoney(s.total)+'</td><td>'+escapeHtml(s.payment||'—')+'</td>';
       html += '<td class="row-actions">'+(s.invoice_id?'<span class="tag info">Nota gerada</span>':'<button class="btn small outline" onclick="generateInvoiceFromSale(\''+s.id+'\')">Gerar nota</button>')+(isComercial?'':' <button class="btn small danger" onclick="deleteSale(\''+s.id+'\')">Excluir</button>')+'</td></tr>';
     });
     html += '</table></div>';
@@ -2608,10 +2647,11 @@ async function renderBagDelivery(){
   if(bags.length===0){
     html += '<div class="empty">Nenhuma sacola registrada ainda.</div>';
   } else {
-    html += '<div class="card"><table><tr><th>Cliente</th><th>Vendedor(a)</th><th>Enviada em</th><th>Prazo</th><th>Itens</th><th>Status</th><th></th></tr>';
+    html += bulkActionBarHtml('bag_cb', {fn:'deleteBagDelivery', text:'sacola'});
+    html += '<div class="card"><table><tr><th style="width:24px;"><input type="checkbox" onchange="toggleAllCB(this,\'bag_cb\')"></th><th>Cliente</th><th>Vendedor(a)</th><th>Enviada em</th><th>Prazo</th><th>Itens</th><th>Status</th><th></th></tr>';
     bags.forEach(b=>{
       const overdue = b.status==='aberta' && b.deadline && new Date(b.deadline).getTime() < Date.now();
-      html += '<tr><td>'+escapeHtml(b.customer_name)+(b.customer_phone?' <a href="'+waLink(b.customer_phone)+'" target="_blank" title="Chamar no WhatsApp">💬</a>':'')+'</td>';
+      html += '<tr><td><input type="checkbox" class="bag_cb" value="'+b.id+'" onchange="updateBulkBar(\'bag_cb\')"></td><td>'+escapeHtml(b.customer_name)+(b.customer_phone?' <a href="'+waLink(b.customer_phone)+'" target="_blank" title="Chamar no WhatsApp">💬</a>':'')+'</td>';
       html += '<td>'+(b.sellers?escapeHtml(b.sellers.name):'—')+'</td>';
       html += '<td>'+fmtDateTime(b.sent_at)+'</td>';
       html += '<td>'+(b.deadline?('<span'+(overdue?' class="tag bad"':'')+'>'+fmtDateTime(b.deadline)+(overdue?' (vencida)':'')+'</span>'):'—')+'</td>';
@@ -3277,14 +3317,16 @@ async function renderClientes(){
   html += '<button class="btn" onclick="openCustomerForm()">+ Adicionar cliente</button>';
   html += '<div class="row-actions" style="margin-top:10px;"><button class="btn outline" onclick="exportClientesCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportClientesPDF()">🖨️ Exportar PDF</button></div>';
   html += '<div class="section-title">Clientes (' + customers.length + ')</div>';
+  const isComercialClientes = currentProfile && currentProfile.role==='comercial';
   if(customers.length===0){
     html += '<div class="empty">Nenhum cliente cadastrado ainda.</div>';
   } else {
-    html += '<div class="card"><table><tr><th>Nome</th><th>Telefone</th><th>E-mail</th><th>Nascimento</th><th>Cashback</th><th></th></tr>';
+    if(!isComercialClientes){ html += bulkActionBarHtml('cliente_cb', {fn:'deleteCustomer', text:'cliente'}); }
+    html += '<div class="card"><table><tr>'+(isComercialClientes?'':'<th style="width:24px;"><input type="checkbox" onchange="toggleAllCB(this,\'cliente_cb\')"></th>')+'<th>Nome</th><th>Telefone</th><th>E-mail</th><th>Nascimento</th><th>Cashback</th><th></th></tr>';
     customers.forEach(c=>{
       const nasc = (c.birth_day && c.birth_month) ? String(c.birth_day).padStart(2,'0')+'/'+String(c.birth_month).padStart(2,'0') : '—';
-      html += '<tr><td>'+escapeHtml(c.name)+'</td><td>'+escapeHtml(c.phone||'—')+'</td><td>'+escapeHtml(c.email||'—')+'</td><td>'+nasc+'</td><td>'+fmtMoney(c.cashback_balance)+'</td>';
-      html += '<td class="row-actions"><button class="btn small outline" onclick="openCustomerForm(\''+c.id+'\')">Editar</button>'+((currentProfile && currentProfile.role==='comercial')?'':' <button class="btn small danger" onclick="deleteCustomer(\''+c.id+'\')">Excluir</button>')+'</td></tr>';
+      html += '<tr>'+(isComercialClientes?'':'<td><input type="checkbox" class="cliente_cb" value="'+c.id+'" onchange="updateBulkBar(\'cliente_cb\')"></td>')+'<td>'+escapeHtml(c.name)+'</td><td>'+escapeHtml(c.phone||'—')+'</td><td>'+escapeHtml(c.email||'—')+'</td><td>'+nasc+'</td><td>'+fmtMoney(c.cashback_balance)+'</td>';
+      html += '<td class="row-actions"><button class="btn small outline" onclick="openCustomerForm(\''+c.id+'\')">Editar</button>'+(isComercialClientes?'':' <button class="btn small danger" onclick="deleteCustomer(\''+c.id+'\')">Excluir</button>')+'</td></tr>';
     });
     html += '</table></div>';
   }
