@@ -1511,22 +1511,23 @@ function labelTagHtml(p, sizeRow, settings){
   if(settings.tagline){ html += '<div class="tag-tagline">'+escapeHtml(settings.tagline)+'</div>'; }
   html += '<div class="tag-divider"></div>';
   html += '<div class="tag-pname">'+escapeHtml(p.name)+'</div>';
+  html += '<div style="width:100%;">';
+  if(p.sku){ html += '<div class="tag-sku-float">SKU: '+escapeHtml(p.sku)+'</div>'; }
   html += '<table class="tag-specs">';
   if(p.ref){ html += '<tr><td>REF.:</td><td>'+escapeHtml(p.ref)+'</td></tr>'; }
   if(p.color){ html += '<tr><td>COR:</td><td><strong>'+escapeHtml(p.color)+'</strong></td></tr>'; }
   html += '<tr><td>TAMANHO:</td><td><strong>'+escapeHtml(sizeRow.size)+'</strong></td></tr>';
   if(p.composition){ html += '<tr><td>COMPOSIÇÃO:</td><td><strong>'+escapeHtml(p.composition)+'</strong></td></tr>'; }
-  html += '</table>';
-  if(p.sku){ html += '<div class="tag-sku">SKU: '+escapeHtml(p.sku)+'</div>'; }
+  html += '</table></div>';
   html += '<div class="tag-divider"></div>';
   if(barcode){ html += '<div class="tag-barcode">'+barcode+'</div><div class="tag-barcode-num">'+escapeHtml(sizeRow.barcode)+'</div>'; }
   html += '<div class="tag-divider"></div>';
   let contact = [];
-  if(settings.instagram){ contact.push('@'+escapeHtml((settings.instagram||'').replace(/^@/,'')) ); }
+  if(settings.instagram){ contact.push('📷 @'+escapeHtml((settings.instagram||'').replace(/^@/,'')) ); }
   if(settings.website_url){ contact.push(escapeHtml(settings.website_url)); }
   if(contact.length){ html += '<div class="tag-contact">'+contact.join(' &nbsp;|&nbsp; ')+'</div>'; }
-  if(settings.exchange_policy_text){ html += '<div class="tag-policy">'+escapeHtml(settings.exchange_policy_text)+'</div>'; }
-  html += '<div class="tag-thanks">Obrigada por escolher a '+escapeHtml(settings.store_name||'')+'!</div>';
+  if(settings.exchange_policy_text){ html += '<div class="tag-policy-row"><span class="tag-policy-line"></span>📅 '+escapeHtml(settings.exchange_policy_text)+'<span class="tag-policy-line"></span></div>'; }
+  html += '<div class="tag-thanks">Obrigada por escolher a '+escapeHtml(settings.store_name||'')+'! ♡</div>';
   html += '<div class="tag-cut-dot left"></div><div class="tag-cut-dot right"></div>';
   html += '</div>';
   html += '<div class="tag-bottom">';
@@ -1549,25 +1550,27 @@ function printLabelSheet(entries){
   html += '@page{ size:50mm 75mm; margin:0; }';
   html += '*{box-sizing:border-box;}';
   html += 'body{margin:0;font-family:"Poppins",sans-serif;color:#2b1a1f;}';
-  html += '.tag{width:50mm;height:75mm;page-break-after:always;position:relative;display:flex;flex-direction:column;align-items:center;text-align:center;font-size:2.1mm;line-height:1.1;overflow:hidden;box-sizing:border-box;}';
-  html += '.tag-hole{width:2.5mm;height:2.5mm;border-radius:50%;border:0.3mm solid #ccc;margin-bottom:0.6mm;flex:none;}';
-  html += '.tag-top{height:50mm;box-sizing:border-box;padding:2mm 2.5mm;flex:none;display:flex;flex-direction:column;align-items:center;width:100%;overflow:hidden;position:relative;border-bottom:0.3mm dashed #bbb;}';
-  html += '.tag-logo{max-width:22mm;max-height:7mm;object-fit:contain;margin-bottom:0.3mm;}';
-  html += '.tag-store-name{font-family:"Playfair Display",serif;font-weight:700;font-size:4.5mm;color:#6b1f33;line-height:1.1;}';
-  html += '.tag-tagline{font-size:1.5mm;letter-spacing:0.4mm;color:#8a7568;margin-bottom:0.2mm;text-transform:uppercase;line-height:1.1;}';
-  html += '.tag-divider{width:100%;border-top:0.2mm solid #ddd;margin:0.3mm 0;flex:none;}';
-  html += '.tag-pname{font-weight:700;font-size:2.6mm;align-self:flex-start;margin-bottom:0.3mm;line-height:1.1;}';
-  html += '.tag-specs{width:100%;border-collapse:collapse;font-size:1.8mm;line-height:1;}';
-  html += '.tag-specs td{padding:0.15mm 0;text-align:left;}';
+  html += '.tag{width:50mm;height:75mm;page-break-after:always;position:relative;display:flex;flex-direction:column;align-items:center;text-align:center;font-size:2.15mm;line-height:1.15;overflow:hidden;box-sizing:border-box;}';
+  html += '.tag-hole{width:2.5mm;height:2.5mm;border-radius:50%;border:0.3mm solid #ccc;margin-bottom:0.5mm;flex:none;}';
+  html += '.tag-top{height:50mm;box-sizing:border-box;padding:2.2mm 3mm;flex:none;display:flex;flex-direction:column;align-items:center;justify-content:space-between;width:100%;overflow:hidden;position:relative;border-bottom:0.3mm dashed #bbb;}';
+  html += '.tag-logo{max-width:23mm;max-height:7mm;object-fit:contain;margin-bottom:0.2mm;}';
+  html += '.tag-store-name{font-family:"Playfair Display",serif;font-weight:700;font-size:4.7mm;color:#6b1f33;line-height:1.1;}';
+  html += '.tag-tagline{font-size:1.55mm;letter-spacing:0.4mm;color:#8a7568;margin-bottom:0.2mm;text-transform:uppercase;line-height:1.1;}';
+  html += '.tag-divider{width:100%;border-top:0.2mm solid #ddd;margin:0.4mm 0;flex:none;}';
+  html += '.tag-pname{font-weight:700;font-size:2.7mm;align-self:flex-start;margin-bottom:0.2mm;line-height:1.15;}';
+  html += '.tag-specs{width:100%;border-collapse:collapse;font-size:1.9mm;}';
+  html += '.tag-specs td{padding:0.2mm 0;text-align:left;}';
   html += '.tag-specs td:first-child{color:#8a7568;padding-right:2mm;white-space:nowrap;}';
-  html += '.tag-sku{align-self:flex-end;font-size:1.8mm;margin-top:0.3mm;line-height:1;}';
+  html += '.tag-sku{align-self:flex-end;font-size:1.85mm;margin-top:0.3mm;line-height:1.15;}';
+  html += '.tag-sku-float{float:right;font-size:1.75mm;color:#8a7568;margin-left:4mm;}';
   html += '.tag-barcode{width:100%;line-height:0;}';
   html += '.tag-barcode svg{width:100%;height:6.5mm;}';
   html += '.tag-barcode.small svg{height:5.5mm;}';
-  html += '.tag-barcode-num{font-size:1.8mm;letter-spacing:0.3mm;line-height:1.1;}';
-  html += '.tag-contact{font-size:1.6mm;line-height:1.15;}';
-  html += '.tag-policy{font-size:1.6mm;margin-top:0.3mm;line-height:1.15;}';
-  html += '.tag-thanks{font-family:"Dancing Script",cursive;font-size:2.6mm;color:#6b1f33;margin-top:0.5mm;line-height:1.15;}';
+  html += '.tag-barcode-num{font-size:1.85mm;letter-spacing:0.3mm;line-height:1.2;}';
+  html += '.tag-contact{font-size:1.65mm;line-height:1.2;}';
+  html += '.tag-policy-row{display:flex;align-items:center;gap:4px;font-size:1.6mm;margin-top:0.3mm;line-height:1.2;width:100%;justify-content:center;}';
+  html += '.tag-policy-line{flex:1;max-width:5mm;border-top:0.2mm solid #ddd;}';
+  html += '.tag-thanks{font-family:"Dancing Script",cursive;font-size:2.8mm;color:#6b1f33;margin-top:0.4mm;line-height:1.2;}';
   html += '.tag-cut-dot{position:absolute;bottom:-1mm;width:2mm;height:2mm;border-radius:50%;background:#fff;border:0.3mm solid #bbb;}';
   html += '.tag-cut-dot.left{left:-0.3mm;}';
   html += '.tag-cut-dot.right{right:-0.3mm;}';
