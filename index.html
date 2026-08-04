@@ -1074,16 +1074,21 @@ async function renderEstoque(){
 }
 
 function estoqueReportData(){
-  const headers = ['Produto','SKU','Categoria','Tamanho','Estoque','Reservado','Disponível','Custo','Venda'];
+  const isComercial = currentProfile && currentProfile.role==='comercial';
+  const headers = isComercial
+    ? ['Produto','SKU','Categoria','Tamanho','Estoque','Reservado','Disponível','Venda']
+    : ['Produto','SKU','Categoria','Tamanho','Estoque','Reservado','Disponível','Custo','Venda'];
   const rows = [];
   (estoqueProductsCache||[]).forEach(function(p){
     const sizes = p.product_sizes||[];
+    const custoCol = isComercial ? [] : [String(p.cost_price||0).replace('.',',')];
+    const vendaCol = String(p.sale_price||0).replace('.',',');
     if(sizes.length===0){
-      rows.push([p.name, (p.sku||''), categoryName(estoqueCategoriesCache, p.category_id), '—', 0, 0, 0, String(p.cost_price||0).replace('.',','), String(p.sale_price||0).replace('.',',')]);
+      rows.push([p.name, (p.sku||''), categoryName(estoqueCategoriesCache, p.category_id), '—', 0, 0, 0, ...custoCol, vendaCol]);
     } else {
       sizes.forEach(function(sz){
         const disp = (Number(sz.stock)||0)-(Number(sz.reserved)||0);
-        rows.push([p.name, (p.sku||''), categoryName(estoqueCategoriesCache, p.category_id), sz.size, (Number(sz.stock)||0), (Number(sz.reserved)||0), disp, String(p.cost_price||0).replace('.',','), String(p.sale_price||0).replace('.',',')]);
+        rows.push([p.name, (p.sku||''), categoryName(estoqueCategoriesCache, p.category_id), sz.size, (Number(sz.stock)||0), (Number(sz.reserved)||0), disp, ...custoCol, vendaCol]);
       });
     }
   });
