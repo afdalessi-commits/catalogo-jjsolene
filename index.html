@@ -1130,11 +1130,16 @@ function pedidoCardHtml(o, settings){
 }
 async function deleteOrderAction(id){
   if(!confirm('Excluir este pedido? Essa ação não pode ser desfeita.')) return;
+  const orderRows = await q(SUPA.from('orders').select('status').eq('id', id));
+  const orderStatus = orderRows[0] ? orderRows[0].status : null;
   const linkedSales = await q(SUPA.from('sales').select('id,invoice_id').eq('order_id', id));
   const hasInvoice = linkedSales.some(s=>s.invoice_id);
   if(hasInvoice){
     toast('Esse pedido já virou uma venda com nota fiscal emitida e não pode ser excluído.');
     return;
+  }
+  if(orderStatus==='pendente'){
+    try{ await q(SUPA.rpc('cancel_order', { p_order_id: id })); }catch(e){ console.error('Erro ao liberar estoque reservado antes de excluir:', e); }
   }
   for(const s of linkedSales){
     await q(SUPA.from('sale_items').delete().eq('sale_id', s.id));
