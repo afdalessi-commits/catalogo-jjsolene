@@ -1066,6 +1066,9 @@ function pedidoCardHtml(o, settings){
     if(o.gift_product_id) extras.push('🎁 Inclui brinde');
     html += '<div class="pedido-items">'+extras.join(' · ')+'</div>';
   }
+  if(o.manual_gift_note){
+    html += '<div class="pedido-items" style="color:#a9720c;font-weight:700;">🎁 Brinde personalizado: '+escapeHtml(o.manual_gift_note)+' — separar na hora de confirmar</div>';
+  }
   if(o.status==='pendente' && o.created_at && settings){
     const ageMs = Date.now() - new Date(o.created_at).getTime();
     const isCard = (o.payment_method||'').indexOf('cartao')===0;
@@ -1129,7 +1132,7 @@ async function confirmOrderAction(id){
   const order = orderRows[0];
   const saleId = await q(SUPA.rpc('confirm_order', { p_order_id: id }));
   try{ await applyCashbackRules(order ? order.phone : null, order ? Number(order.total)||0 : 0, saleId); }catch(e){ console.error('Erro ao aplicar regra de cashback:', e); }
-  if(order && order.payment_method==='cartao_infinitepay' && order.installments){
+  if(order && order.installments){
     try{ await recordInfinitePayAbsorbedFee(order, saleId); }catch(e){ console.error('Erro ao lançar taxa de parcelamento:', e); }
   }
   toast('Pedido confirmado. Venda registrada.');
@@ -3397,7 +3400,8 @@ async function renderMarketing(){
   else {
     html += '<div class="card" style="margin-top:10px;"><table><tr><th>A partir de</th><th>Brinde</th><th>Status</th><th></th></tr>';
     gifts.forEach(g=>{
-      html += '<tr><td>'+fmtMoney(g.min_total)+'</td><td>'+escapeHtml(g.products?g.products.name:'—')+'</td><td>'+(g.active?'<span class="tag ok">Ativo</span>':'<span class="tag warn">Inativo</span>')+'</td><td><button class="btn small danger" onclick="deleteGift(\''+g.id+'\')">Excluir</button></td></tr>';
+      const giftLabel = g.gift_manual_name ? (escapeHtml(g.gift_manual_name)+' <span class="tag info">personalizado</span>') : escapeHtml(g.products?g.products.name:'—');
+      html += '<tr><td>'+fmtMoney(g.min_total)+'</td><td>'+giftLabel+'</td><td>'+(g.active?'<span class="tag ok">Ativo</span>':'<span class="tag warn">Inativo</span>')+'</td><td><button class="btn small danger" onclick="deleteGift(\''+g.id+'\')">Excluir</button></td></tr>';
     });
     html += '</table></div>';
   }
@@ -3474,12 +3478,27 @@ function openGiftForm(){
   const products = productsLiteCache||[];
   let html = '<h3>Nova regra de brinde</h3>';
   html += '<div class="field" style="margin-bottom:8px;"><label>Valor mínimo da compra (R$)</label><input id="gf_min" type="number" step="0.01" value="200"></div>';
-  html += '<div class="field" style="margin-bottom:8px;"><label>Produto que será o brinde</label><select id="gf_product">'+products.map(p=>'<option value="'+p.id+'">'+escapeHtml(p.name)+'</option>').join('')+'</select></div>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>Tipo de brinde</label><select id="gf_type" onchange="toggleGiftTypeFields()"><option value="produto">Produto do estoque</option><option value="manual">Brinde personalizado (não controla estoque)</option></select></div>';
+  html += '<div id="gf_produto_field" class="field" style="margin-bottom:8px;"><label>Produto que será o brinde</label><select id="gf_product">'+products.map(p=>'<option value="'+p.id+'">'+escapeHtml(p.name)+'</option>').join('')+'</select></div>';
+  html += '<div id="gf_manual_field" class="field hidden" style="margin-bottom:8px;"><label>Descrição do brinde</label><input id="gf_manual_name" placeholder="Ex: Garrafa personalizada"><div class="note">Esse brinde não desconta do estoque. Quando um pedido se qualificar, ele aparece com destaque em Pedidos pra você separar na hora de confirmar.</div></div>';
   html += '<div class="row-actions"><button class="btn" onclick="saveGift()">Salvar</button><button class="btn outline" onclick="closeModal()">Cancelar</button></div>';
   openModal(html);
 }
+function toggleGiftTypeFields(){
+  const type = document.getElementById('gf_type').value;
+  document.getElementById('gf_produto_field').classList.toggle('hidden', type!=='produto');
+  document.getElementById('gf_manual_field').classList.toggle('hidden', type!=='manual');
+}
 async function saveGift(){
-  await q(SUPA.from('gift_rules').insert([{ min_total: Number(document.getElementById('gf_min').value)||0, gift_product_id: document.getElementById('gf_product').value }]));
+  const type = document.getElementById('gf_type').value;
+  const minTotal = Number(document.getElementById('gf_min').value)||0;
+  if(type==='manual'){
+    const name = document.getElementById('gf_manual_name').value.trim();
+    if(!name){ toast('Descreva o brinde personalizado.'); return; }
+    await q(SUPA.from('gift_rules').insert([{ min_total: minTotal, gift_product_id: null, gift_manual_name: name }]));
+  } else {
+    await q(SUPA.from('gift_rules').insert([{ min_total: minTotal, gift_product_id: document.getElementById('gf_product').value, gift_manual_name: null }]));
+  }
   closeModal();
   await renderMarketing();
   toast('Regra de brinde salva.');
@@ -5032,7 +5051,7 @@ const CATALOG_JS = [
 '}',
 'function cartSubtotal(){ return cart.filter(function(it){return !it.isGift;}).reduce(function(s,it){return s + it.qty*lineUnitPrice(it);},0); }',
 'function bestGiftRule(subtotal){',
-'  var eligible = (CATALOG.giftRules||[]).filter(function(r){ return r.active!==false && subtotal >= r.min_total && r.products; });',
+'  var eligible = (CATALOG.giftRules||[]).filter(function(r){ return r.active!==false && subtotal >= r.min_total && (r.products || r.gift_manual_name); });',
 '  if(!eligible.length) return null;',
 '  eligible.sort(function(a,b){ return b.min_total - a.min_total; });',
 '  return eligible[0];',
@@ -5043,7 +5062,12 @@ const CATALOG_JS = [
 '  if(subtotal<=0) return;',
 '  var rule = bestGiftRule(subtotal);',
 '  if(!rule) return;',
+'  if(rule.gift_manual_name){',
+'    cart.push({ id:"manual-gift", name: rule.gift_manual_name+" (brinde 🎁)", price:0, size:null, qty:1, isGift:true, isManualGift:true, manualGiftName: rule.gift_manual_name });',
+'    return;',
+'  }',
 '  var gp = rule.products;',
+'  if(!gp) return;',
 '  var sizes = (gp.product_sizes||[]).map(function(sz){ return { size: sz.size, avail: (Number(sz.stock)||0)-(Number(sz.reserved)||0) }; }).filter(function(s){return s.avail>0;});',
 '  if(!sizes.length) return;',
 '  cart.push({ id: gp.id, name: gp.name+" (brinde 🎁)", price: 0, size: sizes[0].size, qty: 1, isGift:true, giftProductId: gp.id });',
@@ -5081,7 +5105,7 @@ const CATALOG_JS = [
 '  itemsEl.innerHTML = "";',
 '  cart.forEach(function(it, idx){',
 '    if(it.isGift){',
-'      var grow = document.createElement("div"); grow.className="gift-line"; grow.textContent = "🎁 Brinde: "+it.name.replace(" (brinde 🎁)","")+" (Tam "+it.size+")";',
+'      var grow = document.createElement("div"); grow.className="gift-line"; grow.textContent = "🎁 Brinde: "+it.name.replace(" (brinde 🎁)","")+(it.size?(" (Tam "+it.size+")"):"");',
 '      itemsEl.appendChild(grow);',
 '      return;',
 '    }',
@@ -5144,10 +5168,10 @@ const CATALOG_JS = [
 '  var btn = document.getElementById("checkoutBtn");',
 '  btn.disabled = true; btn.textContent = "Enviando pedido...";',
 '  var orderId = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())+"-"+Math.random().toString(36).slice(2));',
-'  var items = cart.map(function(it){ return { product_id: it.id, size: it.size, qty: it.qty, price: lineUnitPrice(it) }; });',
 '  var giftItem = cart.find(function(it){return it.isGift;});',
+'  var items = cart.filter(function(it){ return !it.isManualGift; }).map(function(it){ return { product_id: it.id, size: it.size, qty: it.qty, price: lineUnitPrice(it) }; });',
 '  var res = await sb.rpc("reserve_stock", { p_order_id: orderId, p_customer: name, p_phone: phone, p_items: items,',
-'    p_coupon_code: appliedCoupon ? appliedCoupon.code : null, p_gift_product_id: giftItem ? giftItem.giftProductId : null });',
+'    p_coupon_code: appliedCoupon ? appliedCoupon.code : null, p_gift_product_id: (giftItem && !giftItem.isManualGift) ? giftItem.giftProductId : null });',
 '  if(res.error){',
 '    alert("Não foi possível concluir o pedido: " + res.error.message + "\\nAlguém pode ter levado a última peça — atualize a página e tente de novo.");',
 '    btn.disabled = false; btn.textContent = "Finalizar pedido";',
@@ -5155,8 +5179,9 @@ const CATALOG_JS = [
 '  }',
 '  try{ await sb.rpc("set_order_referral_source", { p_order_id: orderId, p_source: source }); }catch(e){}',
 '  try{ await sb.rpc("set_order_payment_method", { p_order_id: orderId, p_method: "pix" }); }catch(e){}',
+'  if(giftItem && giftItem.isManualGift){ try{ await sb.rpc("set_order_manual_gift", { p_order_id: orderId, p_note: giftItem.manualGiftName }); }catch(e){} }',
 '  try{ await sb.rpc("upsert_customer", { p_name: name, p_phone: phone, p_email: null, p_birth_day: null, p_birth_month: null, p_cpf: null }); }catch(e){}',
-'  var lines = cart.map(function(it){ return "- "+it.name+" (Tam "+it.size+") x"+it.qty+" — "+money(lineUnitPrice(it)*it.qty); });',
+'  var lines = cart.map(function(it){ return "- "+it.name+(it.size?(" (Tam "+it.size+")"):"")+" x"+it.qty+" — "+money(lineUnitPrice(it)*it.qty); });',
 '  var total = (res.data && res.data.total!=null) ? res.data.total : cartSubtotal();',
 '  var msg = "Olá! Fiz um pedido no catálogo (" + name + "):%0A%0A" + encodeURIComponent(lines.join("\\n")) + "%0A%0ATotal: " + encodeURIComponent(money(total));',
 '  var wpp = (CATALOG.settings.whatsapp||"").replace(/\\D/g,"");',
@@ -5181,10 +5206,10 @@ const CATALOG_JS = [
 '  var btn = document.getElementById("checkoutCardBtn");',
 '  btn.disabled = true; btn.textContent = "Preparando pagamento...";',
 '  var orderId = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())+"-"+Math.random().toString(36).slice(2));',
-'  var items = cart.map(function(it){ return { product_id: it.id, size: it.size, qty: it.qty, price: lineUnitPrice(it) }; });',
 '  var giftItem = cart.find(function(it){return it.isGift;});',
+'  var items = cart.filter(function(it){ return !it.isManualGift; }).map(function(it){ return { product_id: it.id, size: it.size, qty: it.qty, price: lineUnitPrice(it) }; });',
 '  var res = await sb.rpc("reserve_stock", { p_order_id: orderId, p_customer: name, p_phone: phone, p_items: items,',
-'    p_coupon_code: appliedCoupon ? appliedCoupon.code : null, p_gift_product_id: giftItem ? giftItem.giftProductId : null });',
+'    p_coupon_code: appliedCoupon ? appliedCoupon.code : null, p_gift_product_id: (giftItem && !giftItem.isManualGift) ? giftItem.giftProductId : null });',
 '  if(res.error){',
 '    alert("Não foi possível preparar o pedido: " + res.error.message + "\\nAtualize a página e tente de novo.");',
 '    btn.disabled = false; btn.textContent = "Pagar com cartão";',
@@ -5193,6 +5218,7 @@ const CATALOG_JS = [
 '  try{ await sb.rpc("set_order_referral_source", { p_order_id: orderId, p_source: source }); }catch(e){}',
 '  try{ await sb.rpc("set_order_payment_method", { p_order_id: orderId, p_method: "cartao_pendente" }); }catch(e){}',
 '  try{ await sb.rpc("set_order_installments", { p_order_id: orderId, p_installments: installments }); }catch(e){}',
+'  if(giftItem && giftItem.isManualGift){ try{ await sb.rpc("set_order_manual_gift", { p_order_id: orderId, p_note: giftItem.manualGiftName }); }catch(e){} }',
 '  try{ await sb.rpc("upsert_customer", { p_name: name, p_phone: phone, p_email: null, p_birth_day: null, p_birth_month: null, p_cpf: null }); }catch(e){}',
 '  var baseTotal = (res.data && res.data.total!=null) ? res.data.total : cartSubtotal();',
 '  var chargeTotal = installmentChargeTotal(baseTotal, installments, CATALOG.settings);',
