@@ -3069,24 +3069,45 @@ function openFinanceForm(){
   html += '<div class="row-actions"><button class="btn" onclick="saveFinance()">Salvar</button><button class="btn outline" onclick="closeModal()">Cancelar</button></div>';
   openModal(html);
 }
+async function createBillReminderTask(financeId, description, dueDate, amount){
+  if(!dueDate) return;
+  const inserted = await q(SUPA.from('tasks').insert([{
+    title: '💰 Pagar: '+description,
+    description: 'Valor: '+fmtMoney(amount)+' — lançado automaticamente pelo Financeiro.',
+    due_date: dueDate,
+    priority: 'alta',
+    visibility: 'shared',
+    owner_id: currentUser.id,
+    finance_id: financeId
+  }]).select());
+  if(isGoogleConnected()){ googleSyncTask(inserted[0]); }
+}
 async function saveFinance(){
   const amount = Number(document.getElementById('fi_amount').value)||0;
   if(amount<=0){ toast('Informe um valor válido.'); return; }
-  await q(SUPA.from('finance').insert([{
+  const type = document.getElementById('fi_type').value;
+  const description = document.getElementById('fi_desc').value.trim() || '(sem descrição)';
+  const status = document.getElementById('fi_status').value;
+  const dueDate = document.getElementById('fi_due').value || null;
+  const inserted = await q(SUPA.from('finance').insert([{
     date: document.getElementById('fi_date').value || todayISO(),
-    type: document.getElementById('fi_type').value,
+    type: type,
     category: document.getElementById('fi_cat').value.trim(),
-    description: document.getElementById('fi_desc').value.trim() || '(sem descrição)',
-    amount, status: document.getElementById('fi_status').value,
-    due_date: document.getElementById('fi_due').value || null,
+    description: description,
+    amount, status: status,
+    due_date: dueDate,
     origin:'manual'
-  }]));
+  }]).select());
+  if(type==='despesa' && status==='pendente' && dueDate){
+    await createBillReminderTask(inserted[0].id, description, dueDate, amount);
+  }
   closeModal();
   await renderFinanceiro();
-  toast('Lançamento salvo.');
+  toast('Lançamento salvo.'+(type==='despesa' && status==='pendente' && dueDate ? ' Um lembrete apareceu na Agenda compartilhada.' : ''));
 }
 async function markFinancePaid(id){
   await q(SUPA.from('finance').update({ status:'pago' }).eq('id', id));
+  await q(SUPA.from('tasks').update({ done:true }).eq('finance_id', id));
   await renderFinanceiro();
 }
 async function deleteFinance(id){
@@ -3179,9 +3200,12 @@ async function generateRecurringExpenses(){
     const dueDate = monthStr+'-'+String(day).padStart(2,'0');
     return { date: todayISO(), due_date: dueDate, type:'despesa', category: r.category||'Despesa fixa', description: r.description, amount: r.amount, status:'pendente', origin:'recorrente', recurring_expense_id: r.id };
   });
-  const insR = await SUPA.from('finance').insert(rows);
+  const insR = await SUPA.from('finance').insert(rows).select();
   if(insR.error){ toast('Erro: '+insR.error.message); return; }
-  toast(toCreate.length+' despesa(s) fixa(s) lançada(s) para este mês.');
+  for(const row of insR.data){
+    await createBillReminderTask(row.id, row.description, row.due_date, row.amount);
+  }
+  toast(toCreate.length+' despesa(s) fixa(s) lançada(s) para este mês, com lembrete na Agenda compartilhada.');
   await renderFinanceiro();
 }
 
