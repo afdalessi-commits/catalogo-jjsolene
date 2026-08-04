@@ -162,6 +162,12 @@
   .color-select-item{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;font-size:13px;color:var(--text);cursor:pointer;}
   .color-select-item:hover{background:var(--cream);}
   .color-select-item.active{background:var(--cream);font-weight:600;}
+  .ac-menu{position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,0.12);z-index:30;max-height:220px;overflow-y:auto;padding:4px;}
+  .ac-menu.hidden{display:none;}
+  .ac-item{padding:7px 9px;border-radius:6px;font-size:13px;color:var(--text);cursor:pointer;}
+  .ac-item:hover{background:var(--cream);}
+  .ac-item.ac-empty{color:var(--muted);cursor:default;}
+  .ac-item.ac-empty:hover{background:none;}
   .upload-preview{width:100px;height:100px;object-fit:cover;border-radius:10px;border:1px solid var(--border);margin-top:8px;display:block;}
   .modal-bg{position:fixed;inset:0;background:rgba(43,26,31,0.45);display:flex;align-items:center;justify-content:center;z-index:200;padding:20px;}
   .modal{background:#fff;border-radius:14px;padding:22px 24px;max-width:540px;width:100%;max-height:88vh;overflow:auto;}
@@ -2517,6 +2523,8 @@ async function deleteSale(id){
 let currentBagItems = [];
 let bagsCache = [];
 let currentBagCloseItems = [];
+let bagFormDraft = null;
+let bagCustomersCache = [];
 function fmtDateTime(iso){
   if(!iso) return '—';
   const d = new Date(iso);
@@ -2551,24 +2559,31 @@ async function renderBagDelivery(){
       html += '<td>'+(b.deadline?('<span'+(overdue?' class="tag bad"':'')+'>'+fmtDateTime(b.deadline)+(overdue?' (vencida)':'')+'</span>'):'—')+'</td>';
       html += '<td>'+(b.bag_delivery_items||[]).length+' peça(s)</td>';
       html += '<td>'+(b.status==='fechada'?'<span class="tag ok">Fechada</span>':'<span class="tag warn">Em andamento</span>')+'</td>';
-      html += '<td class="row-actions">'+(b.status==='aberta'?'<button class="btn small" onclick="openBagCloseForm(\''+b.id+'\')">Fechar sacola</button>':'')+' <button class="btn small danger" onclick="deleteBagDelivery(\''+b.id+'\')">Excluir</button></td></tr>';
+      html += '<td class="row-actions">'+(b.status==='aberta'?'<button class="btn small" onclick="openBagCloseForm(\''+b.id+'\')">Fechar sacola</button>':'')+(b.customer_id?' <button class="btn small outline" onclick="printBagPromissoryNote(\''+b.id+'\')">🖨️ Nota</button>':'')+' <button class="btn small danger" onclick="deleteBagDelivery(\''+b.id+'\')">Excluir</button></td></tr>';
     });
     html += '</table></div>';
   }
   el.innerHTML = html;
 }
 async function openBagForm(){
-  currentBagItems = [];
+  const preserved = bagFormDraft;
+  bagFormDraft = null;
+  currentBagItems = preserved ? preserved.items : [];
   const products = await getProductsLite(true);
+  bagCustomersCache = await q(SUPA.from('customers').select('*').order('name'));
   const isComercial = currentProfile && currentProfile.role==='comercial';
   const defaultDeadline = new Date(Date.now()+24*3600000);
   let html = '<h3>Nova sacola (Bag Delivery)</h3>';
-  html += '<div class="form-row"><div class="field"><label>Nome da cliente</label><input id="bg_customer" placeholder="Nome"></div><div class="field"><label>Telefone</label><input id="bg_phone" placeholder="Com DDD"></div></div>';
+  html += '<div class="form-row" style="align-items:end;">';
+  html += '<div class="field" style="position:relative;"><label>Cliente</label><input id="bg_customer_search" placeholder="Buscar por nome ou telefone..." autocomplete="off" oninput="filterBagCustomerOptions()" onfocus="filterBagCustomerOptions()" onblur="setTimeout(function(){var m=document.getElementById(\'bg_customer_menu\'); if(m) m.classList.add(\'hidden\');},150)"><div id="bg_customer_menu" class="ac-menu hidden"></div><input type="hidden" id="bg_customer_id" value=""></div>';
+  html += '<div class="field"><button type="button" class="btn outline" style="width:100%;" onclick="startNewBagCustomer()">+ Cadastrar novo cliente</button></div>';
+  html += '</div>';
+  html += '<div id="bg_customer_info" class="note hidden" style="margin-bottom:8px;"></div>';
   if(!isComercial){
     const sellers = await getSellersLite(true);
     html += '<div class="field" style="margin-bottom:8px;"><label>Vendedor(a) (opcional)</label><select id="bg_seller"><option value="">— sem vendedor(a) —</option>'+sellers.filter(sl=>sl.active!==false).map(sl=>'<option value="'+sl.id+'">'+escapeHtml(sl.name)+'</option>').join('')+'</select></div>';
   }
-  html += '<div class="field" style="margin-bottom:8px;"><label>Prazo pra devolver/decidir</label><input id="bg_deadline" type="datetime-local" value="'+toDatetimeLocalValue(defaultDeadline)+'"></div>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>Prazo pra devolver/decidir (também é o vencimento da nota promissória)</label><input id="bg_deadline" type="datetime-local" value="'+toDatetimeLocalValue(defaultDeadline)+'"></div>';
   html += '<div class="field" style="margin-bottom:8px;"><label>📷 Bipar código de barras (soma 1 unidade a cada leitura)</label><input id="bg_barcode" placeholder="Clique aqui e escaneie..." onkeydown="if(event.key===\'Enter\'){ event.preventDefault(); scanBarcodeBag(); }"></div>';
   html += '<div id="bg_items_area"></div>';
   html += '<div class="form-row" style="align-items:end;">';
@@ -2578,14 +2593,64 @@ async function openBagForm(){
   html += '<div class="field"><label>Preço unit. (R$)</label><input id="bg_price" type="number" step="0.01" value="0"></div>';
   html += '</div>';
   html += '<button class="btn outline small" onclick="addBagItem()">+ Adicionar item</button>';
-  html += '<div class="row-actions" style="margin-top:16px;"><button class="btn" onclick="saveBagDelivery()">Enviar sacola</button><button class="btn outline" onclick="closeModal()">Cancelar</button></div>';
+  html += '<div class="note" style="margin-top:10px;">Ao enviar, o sistema gera automaticamente uma nota promissória (valor total) pronta pra imprimir e a cliente assinar.</div>';
+  html += '<div class="row-actions" style="margin-top:10px;"><button class="btn" onclick="saveBagDelivery()">Enviar sacola</button><button class="btn outline" onclick="closeModal()">Cancelar</button></div>';
   openModal(html);
   if(products.length===0){
     document.getElementById('bg_items_area').innerHTML = '<div class="note">Cadastre produtos no Estoque antes de montar uma sacola.</div>';
   } else {
     fillBagPrice();
     renderBagItemsArea();
-    document.getElementById('bg_barcode').focus();
+  }
+  if(preserved){
+    document.getElementById('bg_deadline').value = preserved.deadline;
+    if(preserved.customerId){ selectBagCustomer(preserved.customerId); }
+    else { document.getElementById('bg_customer_search').focus(); }
+  } else {
+    document.getElementById('bg_customer_search').focus();
+  }
+}
+function startNewBagCustomer(){
+  bagFormDraft = {
+    items: currentBagItems,
+    deadline: document.getElementById('bg_deadline').value,
+    customerId: document.getElementById('bg_customer_id').value || null
+  };
+  openCustomerForm(null, true);
+}
+function editBagCustomer(id){
+  bagFormDraft = {
+    items: currentBagItems,
+    deadline: document.getElementById('bg_deadline').value,
+    customerId: id
+  };
+  openCustomerForm(id, true);
+}
+function filterBagCustomerOptions(){
+  const term = (document.getElementById('bg_customer_search').value||'').toLowerCase().trim();
+  const menu = document.getElementById('bg_customer_menu');
+  const matches = (term ? bagCustomersCache.filter(function(c){ return (c.name||'').toLowerCase().indexOf(term)!==-1 || (c.phone||'').indexOf(term)!==-1; }) : bagCustomersCache).slice(0,8);
+  menu.innerHTML = matches.length
+    ? matches.map(function(c){ return '<div class="ac-item" onmousedown="selectBagCustomer(\''+c.id+'\')">'+escapeHtml(c.name)+' <span style="color:var(--muted);font-size:11.5px;">'+escapeHtml(c.phone||'')+'</span></div>'; }).join('')
+    : '<div class="ac-item ac-empty">Nenhum cliente encontrado</div>';
+  menu.classList.remove('hidden');
+}
+function selectBagCustomer(id){
+  const c = bagCustomersCache.find(function(x){ return x.id===id; });
+  if(!c) return;
+  document.getElementById('bg_customer_id').value = id;
+  document.getElementById('bg_customer_search').value = c.name;
+  document.getElementById('bg_customer_menu').classList.add('hidden');
+  renderBagCustomerInfo(c);
+}
+function renderBagCustomerInfo(c){
+  const info = document.getElementById('bg_customer_info');
+  info.classList.remove('hidden');
+  const missing = customerMissingFields(c);
+  if(missing.length){
+    info.innerHTML = '⚠️ Cadastro incompleto (falta '+missing.join(', ')+'). É necessário completar antes de enviar, pra emitir a nota promissória.<br><button type="button" class="btn small outline" style="margin-top:6px;" onclick="editBagCustomer(\''+c.id+'\')">Completar cadastro</button>';
+  } else {
+    info.innerHTML = '✅ '+escapeHtml(c.phone)+' · CPF '+escapeHtml(c.cpf)+' · '+escapeHtml(formatCustomerAddress(c));
   }
 }
 function fillBagPrice(){
@@ -2648,14 +2713,18 @@ function renderBagItemsArea(){
 }
 async function saveBagDelivery(){
   if(currentBagItems.length===0){ toast('Adicione ao menos um item.'); return; }
-  const customerName = document.getElementById('bg_customer').value.trim();
-  if(!customerName){ toast('Informe o nome da cliente.'); return; }
+  const customerId = document.getElementById('bg_customer_id').value;
+  if(!customerId){ toast('Selecione ou cadastre a cliente.'); return; }
+  const c = bagCustomersCache.find(function(x){ return x.id===customerId; });
+  if(!c){ toast('Cliente não encontrado(a), selecione novamente.'); return; }
+  if(customerMissingFields(c).length){ toast('Complete o cadastro da cliente (telefone, CPF e endereço) antes de enviar.'); return; }
   const isComercial = currentProfile && currentProfile.role==='comercial';
   const sellerId = isComercial ? (currentProfile.seller_id||null) : (document.getElementById('bg_seller').value || null);
   const deadlineVal = document.getElementById('bg_deadline').value;
   const inserted = await q(SUPA.from('bag_deliveries').insert([{
-    customer_name: customerName,
-    customer_phone: document.getElementById('bg_phone').value.trim(),
+    customer_id: customerId,
+    customer_name: c.name,
+    customer_phone: c.phone,
     seller_id: sellerId,
     deadline: deadlineVal ? new Date(deadlineVal).toISOString() : null,
     created_by: currentUser.id
@@ -2671,6 +2740,7 @@ async function saveBagDelivery(){
   closeModal();
   await renderBagDelivery();
   toast('Sacola enviada. As peças ficaram reservadas até você fechar a sacola.');
+  await printBagPromissoryNote(bagId);
 }
 async function deleteBagDelivery(id){
   if(!confirm('Excluir esta sacola? Se ela ainda estiver em andamento, as peças reservadas serão liberadas.')) return;
@@ -2776,6 +2846,104 @@ function exportBagCSV(){
 function exportBagPDF(){
   const d = bagReportData();
   printReport('Bag Delivery', d.headers, d.rows);
+}
+
+/* ---------- Nota promissória (emitida ao enviar a sacola, no valor total) ---------- */
+const NUM_UNIDADES = ['','um','dois','três','quatro','cinco','seis','sete','oito','nove'];
+const NUM_DEZ_A_DEZENOVE = ['dez','onze','doze','treze','catorze','quinze','dezesseis','dezessete','dezoito','dezenove'];
+const NUM_DEZENAS = ['','dez','vinte','trinta','quarenta','cinquenta','sessenta','setenta','oitenta','noventa'];
+const NUM_CENTENAS = ['','cento','duzentos','trezentos','quatrocentos','quinhentos','seiscentos','setecentos','oitocentos','novecentos'];
+function numTresDigitos(n){
+  if(n===0) return '';
+  if(n===100) return 'cem';
+  const c = Math.floor(n/100);
+  const resto = n%100;
+  const parts = [];
+  if(c>0) parts.push(NUM_CENTENAS[c]);
+  if(resto>0){
+    if(resto<10) parts.push(NUM_UNIDADES[resto]);
+    else if(resto<20) parts.push(NUM_DEZ_A_DEZENOVE[resto-10]);
+    else {
+      const d = Math.floor(resto/10), u = resto%10;
+      parts.push(NUM_DEZENAS[d] + (u>0 ? (' e '+NUM_UNIDADES[u]) : ''));
+    }
+  }
+  return parts.join(' e ');
+}
+function numeroPorExtenso(n){
+  n = Math.floor(n);
+  if(n===0) return 'zero';
+  const grupos = [
+    { valor:1000000000, singular:'bilhão', plural:'bilhões' },
+    { valor:1000000, singular:'milhão', plural:'milhões' },
+    { valor:1000, singular:'mil', plural:'mil' },
+    { valor:1, singular:'', plural:'' }
+  ];
+  let resto = n;
+  const partes = [];
+  grupos.forEach(function(g){
+    const qtd = Math.floor(resto / g.valor);
+    resto = resto % g.valor;
+    if(qtd<=0) return;
+    if(g.valor===1){ partes.push(numTresDigitos(qtd)); }
+    else if(g.valor===1000){ partes.push(qtd===1 ? 'mil' : (numTresDigitos(qtd)+' mil')); }
+    else { partes.push(numTresDigitos(qtd)+' '+(qtd===1?g.singular:g.plural)); }
+  });
+  if(partes.length===1) return partes[0];
+  return partes.slice(0,-1).join(', ') + ' e ' + partes[partes.length-1];
+}
+function valorPorExtenso(valor){
+  valor = Math.round((Number(valor)||0)*100)/100;
+  const reais = Math.floor(valor);
+  const centavos = Math.round((valor - reais)*100);
+  if(reais===0 && centavos===0) return 'zero reais';
+  let txt = '';
+  if(reais>0){ txt += numeroPorExtenso(reais) + ' ' + (reais===1?'real':'reais'); }
+  if(centavos>0){ txt += (reais>0?' e ':'') + numeroPorExtenso(centavos) + ' ' + (centavos===1?'centavo':'centavos'); }
+  return txt;
+}
+async function printBagPromissoryNote(bagId){
+  const rows = await q(SUPA.from('bag_deliveries').select('*, bag_delivery_items(*, products(name)), customers(*)').eq('id', bagId));
+  const bag = rows[0];
+  if(!bag){ toast('Sacola não encontrada.'); return; }
+  const c = bag.customers;
+  if(!c){ toast('Essa sacola não tem cliente vinculado(a) — não é possível gerar a nota promissória.'); return; }
+  const settings = await getSettings();
+  const total = (bag.bag_delivery_items||[]).reduce(function(s,it){ return s + it.qty*it.unit_price; }, 0);
+  const itemsHtml = (bag.bag_delivery_items||[]).map(function(it){
+    return '<tr><td>'+escapeHtml(it.products?it.products.name:'?')+'</td><td>'+escapeHtml(it.size)+'</td><td>'+it.qty+'</td><td>'+fmtMoney(it.unit_price)+'</td></tr>';
+  }).join('');
+  const storeName = settings.store_name || 'JJ Solene';
+  const w = window.open('', '_blank');
+  let html = '<html><head><title>Nota Promissória — '+escapeHtml(c.name)+'</title><style>';
+  html += 'body{font-family:Georgia,\'Times New Roman\',serif;padding:40px;color:#1a1a1a;max-width:720px;margin:0 auto;}';
+  html += '.np-box{border:2px solid #2b1a1f;border-radius:6px;padding:28px 34px;}';
+  html += '.np-title{text-align:center;font-size:20px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;}';
+  html += '.np-value{text-align:center;font-size:14.5px;margin-bottom:20px;}';
+  html += '.np-value strong{font-size:19px;}';
+  html += 'p{font-size:14px;line-height:1.9;text-align:justify;}';
+  html += '.np-line{border-bottom:1px solid #999;padding:0 4px;}';
+  html += 'table{width:100%;border-collapse:collapse;margin:16px 0;font-size:12.5px;}';
+  html += 'th,td{border:1px solid #ccc;padding:5px 8px;text-align:left;}';
+  html += 'th{background:#f4efe6;}';
+  html += '.np-sign{margin-top:60px;text-align:center;}';
+  html += '.np-sign .ln{border-top:1px solid #333;width:340px;margin:0 auto;padding-top:6px;font-size:12.5px;}';
+  html += '.np-foot{margin-top:10px;font-size:11px;color:#777;text-align:center;}';
+  html += '@media print{ body{padding:16px;} }';
+  html += '</style></head><body><div class="np-box">';
+  html += '<div class="np-title">Nota Promissória</div>';
+  html += '<div class="np-value">Valor: <strong>'+fmtMoney(total)+'</strong><br>('+escapeHtml(valorPorExtenso(total))+')</div>';
+  html += '<p>Aos <span class="np-line">'+(bag.deadline?fmtDate(bag.deadline):'____/____/______')+'</span>, pagarei(emos) por esta única via de NOTA PROMISSÓRIA a <strong>'+escapeHtml(storeName)+'</strong>, ou à sua ordem, a quantia de <strong>'+fmtMoney(total)+'</strong> ('+escapeHtml(valorPorExtenso(total))+'), em moeda corrente nacional, referente às peças retiradas em regime de "Bag Delivery" (sacola para experimentação em domicílio), relacionadas abaixo, comprometendo-me a devolvê-las em perfeito estado ou a efetuar o pagamento integral do valor acima na data de vencimento indicada.</p>';
+  html += '<table><tr><th>Peça</th><th>Tam.</th><th>Qtd</th><th>Valor unit.</th></tr>'+itemsHtml+'</table>';
+  html += '<p><strong>Emitente (devedor):</strong> '+escapeHtml(c.name)+'<br>';
+  html += '<strong>CPF:</strong> '+escapeHtml(c.cpf||'')+' &nbsp;&nbsp; <strong>Telefone:</strong> '+escapeHtml(c.phone||'')+'<br>';
+  html += '<strong>Endereço:</strong> '+escapeHtml(formatCustomerAddress(c))+'</p>';
+  html += '<p style="margin-top:20px;">Emitida por: <span class="np-line">'+escapeHtml(storeName)+'</span> &nbsp;&nbsp; Data de emissão: <span class="np-line">'+fmtDate(bag.sent_at)+'</span></p>';
+  html += '<div class="np-sign"><div class="ln">'+escapeHtml(c.name)+' — assinatura</div></div>';
+  html += '<div class="np-foot">Documento gerado pelo sistema '+escapeHtml(storeName)+' — Bag Delivery nº '+bag.id.slice(0,8).toUpperCase()+'</div>';
+  html += '</div><script>window.print();<\/script></body></html>';
+  w.document.write(html);
+  w.document.close();
 }
 
 /* ============================================================
@@ -3058,9 +3226,27 @@ function exportClientesPDF(){
   const d = clientesReportData();
   printReport('Clientes', d.headers, d.rows);
 }
-function openCustomerForm(id){
-  let c = { id:null, name:'', phone:'', email:'', birth_day:'', birth_month:'', cpf:'' };
-  if(id){ const found = (customersLiteCache||[]).find(function(x){ return x.id===id; }); if(found) c = found; }
+function formatCustomerAddress(c){
+  if(!c) return '';
+  const parts = [];
+  if(c.street) parts.push(c.street+(c.number?', '+c.number:''));
+  if(c.complement) parts.push(c.complement);
+  if(c.neighborhood) parts.push(c.neighborhood);
+  if(c.city) parts.push(c.city+(c.state?'/'+c.state:''));
+  if(c.cep) parts.push('CEP '+c.cep);
+  return parts.join(' — ');
+}
+function customerMissingFields(c){
+  const missing = [];
+  if(!c.phone) missing.push('telefone');
+  if(!c.cpf) missing.push('CPF');
+  if(!c.street || !c.number || !c.neighborhood || !c.city || !c.state) missing.push('endereço');
+  return missing;
+}
+function openCustomerForm(id, forBag){
+  window._customerFormForBag = !!forBag;
+  let c = { id:null, name:'', phone:'', email:'', birth_day:'', birth_month:'', cpf:'', cep:'', street:'', number:'', complement:'', neighborhood:'', city:'', state:'' };
+  if(id){ const found = (customersLiteCache||[]).find(function(x){ return x.id===id; }) || (bagCustomersCache||[]).find(function(x){ return x.id===id; }); if(found) c = found; }
   let html = '<h3>'+(id?'Editar cliente':'Adicionar cliente')+'</h3>';
   html += '<div class="field" style="margin-bottom:8px;"><label>Nome</label><input id="cu_name" value="'+escapeHtml(c.name)+'" placeholder="Nome do cliente"></div>';
   html += '<div class="form-row">';
@@ -3071,31 +3257,63 @@ function openCustomerForm(id){
   html += '<div class="field"><label>Dia de nascimento</label><input id="cu_bday" type="number" min="1" max="31" value="'+(c.birth_day||'')+'"></div>';
   html += '<div class="field"><label>Mês de nascimento</label><input id="cu_bmonth" type="number" min="1" max="12" value="'+(c.birth_month||'')+'"></div>';
   html += '</div>';
-  html += '<div class="field" style="margin-bottom:8px;"><label>CPF (opcional)</label><input id="cu_cpf" value="'+escapeHtml(c.cpf||'')+'"></div>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>CPF</label><input id="cu_cpf" value="'+escapeHtml(c.cpf||'')+'" placeholder="000.000.000-00"></div>';
+  html += '<div class="section-title" style="margin-top:4px;">Endereço (necessário pra nota promissória da Bag Delivery)</div>';
+  html += '<div class="form-row">';
+  html += '<div class="field"><label>CEP</label><input id="cu_cep" value="'+escapeHtml(c.cep||'')+'" placeholder="00000-000"></div>';
+  html += '<div class="field"><label>Rua / Logradouro</label><input id="cu_street" value="'+escapeHtml(c.street||'')+'"></div>';
+  html += '</div>';
+  html += '<div class="form-row">';
+  html += '<div class="field"><label>Número</label><input id="cu_number" value="'+escapeHtml(c.number||'')+'"></div>';
+  html += '<div class="field"><label>Complemento (opcional)</label><input id="cu_complement" value="'+escapeHtml(c.complement||'')+'"></div>';
+  html += '<div class="field"><label>Bairro</label><input id="cu_neighborhood" value="'+escapeHtml(c.neighborhood||'')+'"></div>';
+  html += '</div>';
+  html += '<div class="form-row">';
+  html += '<div class="field"><label>Cidade</label><input id="cu_city" value="'+escapeHtml(c.city||'')+'"></div>';
+  html += '<div class="field"><label>Estado (UF)</label><input id="cu_state" maxlength="2" style="text-transform:uppercase;" value="'+escapeHtml(c.state||'')+'"></div>';
+  html += '</div>';
   html += '<div class="row-actions"><button class="btn" id="cu_save_btn" onclick="saveCustomer('+(id?"'"+id+"'":'null')+')">Salvar</button><button class="btn outline" onclick="closeModal()">Cancelar</button></div>';
   openModal(html);
 }
 async function saveCustomer(id){
   const name = document.getElementById('cu_name').value.trim();
   if(!name){ toast('Informe o nome do cliente.'); return; }
+  const phone = document.getElementById('cu_phone').value.trim();
+  if(!phone){ toast('Informe o telefone do cliente.'); return; }
   const bday = Number(document.getElementById('cu_bday').value)||0;
   const bmonth = Number(document.getElementById('cu_bmonth').value)||0;
   if(!bday || !bmonth){ toast('Informe o dia e o mês de nascimento.'); return; }
+  const cpf = document.getElementById('cu_cpf').value.trim();
+  if(!cpf){ toast('Informe o CPF do cliente.'); return; }
+  const street = document.getElementById('cu_street').value.trim();
+  const number = document.getElementById('cu_number').value.trim();
+  const neighborhood = document.getElementById('cu_neighborhood').value.trim();
+  const city = document.getElementById('cu_city').value.trim();
+  const state = document.getElementById('cu_state').value.trim();
+  if(!street || !number || !neighborhood || !city || !state){ toast('Complete o endereço (rua, número, bairro, cidade e estado).'); return; }
   const payload = {
     name: name,
-    phone: document.getElementById('cu_phone').value.trim() || null,
+    phone: phone,
     email: document.getElementById('cu_email').value.trim(),
     birth_day: bday,
     birth_month: bmonth,
-    cpf: document.getElementById('cu_cpf').value.trim()
+    cpf: cpf,
+    cep: document.getElementById('cu_cep').value.trim(),
+    street: street,
+    number: number,
+    complement: document.getElementById('cu_complement').value.trim(),
+    neighborhood: neighborhood,
+    city: city,
+    state: state.toUpperCase()
   };
   const btn = document.getElementById('cu_save_btn');
   btn.disabled = true; btn.textContent = 'Salvando...';
-  let r;
+  let r, savedId = id;
   if(id){
     r = await SUPA.from('customers').update(payload).eq('id', id);
   } else {
-    r = await SUPA.from('customers').insert([payload]);
+    r = await SUPA.from('customers').insert([payload]).select();
+    if(!r.error) savedId = r.data[0].id;
   }
   if(r.error){
     btn.disabled = false; btn.textContent = 'Salvar';
@@ -3103,9 +3321,15 @@ async function saveCustomer(id){
     else { toast('Erro: ' + r.error.message); }
     return;
   }
+  toast('Cliente salvo.');
+  if(window._customerFormForBag){
+    window._customerFormForBag = false;
+    if(bagFormDraft) bagFormDraft.customerId = savedId;
+    await openBagForm();
+    return;
+  }
   closeModal();
   await renderClientes();
-  toast('Cliente salvo.');
 }
 async function deleteCustomer(id){
   if(!confirm('Excluir este cliente?')) return;
