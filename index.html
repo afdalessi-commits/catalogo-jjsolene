@@ -1324,11 +1324,11 @@ function openPhotoCropOverlay(imageUrl, onConfirm){
     + '<div class="row-actions"><button class="btn" id="cropConfirmBtn">Usar esta foto</button><button class="btn outline" id="cropCancelBtn">Cancelar</button></div>'
     + '</div></div>';
   const imgEl = document.getElementById('cropperImage');
-  const cropper = new Cropper(imgEl, { aspectRatio: 4/5, viewMode: 1, dragMode: 'move', autoCropArea: 1, background: false, guides: false, center: false });
+  const cropper = new Cropper(imgEl, { aspectRatio: 4/5, viewMode: 0, dragMode: 'move', autoCropArea: 1, background: false, guides: false, center: false, minCanvasWidth: 40, minCanvasHeight: 50 });
   document.getElementById('cropZoomInBtn').onclick = function(){ cropper.zoom(0.1); };
   document.getElementById('cropZoomOutBtn').onclick = function(){ cropper.zoom(-0.1); };
   document.getElementById('cropConfirmBtn').onclick = function(){
-    cropper.getCroppedCanvas({ width:1080, height:1350 }).toBlob(function(blob){
+    cropper.getCroppedCanvas({ width:1080, height:1350, fillColor:'#ffffff' }).toBlob(function(blob){
       cropper.destroy();
       root.innerHTML = '';
       onConfirm(blob);
