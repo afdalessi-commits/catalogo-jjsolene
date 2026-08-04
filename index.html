@@ -1127,9 +1127,12 @@ async function renderEstoque(){
       html += '<div class="size-pills">';
       (p.product_sizes||[]).forEach(sz=>{
         const disp = (Number(sz.stock)||0)-(Number(sz.reserved)||0);
-        html += '<span class="size-pill'+(disp<=2?' low':'')+'">'+escapeHtml(sz.size)+': '+disp+(sz.reserved>0?' ('+sz.reserved+' reserv.)':'')+'</span>';
+        html += '<span class="size-pill'+(disp<=2?' low':'')+'" title="Código de barras: '+escapeHtml(sz.barcode||'—')+'">'+escapeHtml(sz.size)+': '+disp+(sz.reserved>0?' ('+sz.reserved+' reserv.)':'')+'</span>';
       });
       html += '</div>';
+      if((p.product_sizes||[]).some(sz=>sz.barcode)){
+        html += '<div class="pmeta" style="font-size:10.5px;">🏷️ '+(p.product_sizes||[]).filter(sz=>sz.barcode).map(sz=>escapeHtml(sz.size)+': '+escapeHtml(sz.barcode)).join(' · ')+'</div>';
+      }
       html += '<div class="pmeta">Estoque total: <strong>'+total+'</strong>'+(reserved>0?' · '+reserved+' reservado(s)':'')+' · '+(p.show_in_catalog!==false?'<span class="tag ok">no catálogo</span>':'<span class="tag warn">oculto</span>')+'</div>';
       if(!isComercial){ html += '<div class="row-actions" style="margin-top:6px;"><button class="btn small outline" onclick="openProductForm(\''+p.id+'\')">Editar</button><button class="btn small outline" onclick="openPrintLabelChooser(\''+p.id+'\')">🏷️ Etiqueta</button><button class="btn small danger" onclick="deleteProduct(\''+p.id+'\')">Excluir</button></div>'; }
       html += '</div>';
