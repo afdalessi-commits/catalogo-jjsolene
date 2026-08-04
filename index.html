@@ -1327,12 +1327,24 @@ async function compositeOnWhite(blob){
     im.onerror = reject;
     im.src = URL.createObjectURL(blob);
   });
+  const raw = document.createElement('canvas');
+  raw.width = img.naturalWidth; raw.height = img.naturalHeight;
+  const rctx = raw.getContext('2d');
+  rctx.drawImage(img,0,0);
+  // Endurece o canal alfa (sem meio-termo) pra evitar "fantasmas" de sombra
+  // translúcida (ex: sombra do chão) que apareceriam como mancha acinzentada
+  // ao misturar com o branco em vez de sumir de vez.
+  const imgData = rctx.getImageData(0,0,raw.width,raw.height);
+  const d = imgData.data;
+  for(let i=3;i<d.length;i+=4){ d[i] = d[i] < 140 ? 0 : 255; }
+  rctx.putImageData(imgData,0,0);
+
   const canvas = document.createElement('canvas');
-  canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+  canvas.width = raw.width; canvas.height = raw.height;
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0,0,canvas.width,canvas.height);
-  ctx.drawImage(img,0,0);
+  ctx.drawImage(raw,0,0);
   return await new Promise(function(resolve){ canvas.toBlob(resolve, 'image/jpeg', 0.92); });
 }
 async function removeBackgroundToWhite(file){
