@@ -3790,7 +3790,8 @@ async function calcDRE(){
   }
   const lucroBruto = receita - cmv;
   const lucroLiquido = lucroBruto - despesa;
-  let html = '<div class="card"><table>';
+  let html = '<div class="row-actions" style="justify-content:flex-end;margin-bottom:6px;"><button type="button" class="btn small outline" onclick="hideDRE()">✕ Ocultar resultado</button></div>';
+  html += '<div class="card"><table>';
   html += '<tr><td>Receita total</td><td style="text-align:right;">'+fmtMoney(receita)+'</td></tr>';
   html += '<tr><td>(–) Custo dos produtos vendidos (CMV)</td><td style="text-align:right;">'+fmtMoney(cmv)+'</td></tr>';
   html += '<tr><td><strong>= Lucro bruto</strong></td><td style="text-align:right;"><strong>'+fmtMoney(lucroBruto)+'</strong></td></tr>';
@@ -3798,6 +3799,10 @@ async function calcDRE(){
   html += '<tr><td><strong>= Lucro líquido</strong></td><td style="text-align:right;"><strong style="'+(lucroLiquido<0?'color:#c0392b;':'')+'">'+fmtMoney(lucroLiquido)+'</strong></td></tr>';
   html += '</table></div>';
   el.innerHTML = html;
+}
+function hideDRE(){
+  const el = document.getElementById('dre_results');
+  if(el) el.innerHTML = '';
 }
 
 /* ---------- Exportar CSV / PDF ---------- */
