@@ -1352,7 +1352,7 @@ async function openProductForm(id){
   html += '<div class="field" style="margin-bottom:8px;"><label>Nome do produto</label><input id="f_name" value="'+escapeHtml(p.name)+'" placeholder="Ex: Blusa de tricô gola V"></div>';
   html += '<div class="form-row">';
   html += '<div class="field"><label>SKU / código</label><input id="f_sku" value="'+escapeHtml(p.sku)+'" placeholder="Opcional"></div>';
-  html += '<div class="field"><label>Categoria</label><select id="f_cat">'+catOptions+'</select></div>';
+  html += '<div class="field"><label>Categoria <a onclick="toggleInlineNewCategory(\'f_cat\')" style="cursor:pointer;font-weight:600;font-size:11.5px;color:var(--wine);">+ nova</a></label><select id="f_cat">'+catOptions+'</select><div id="f_cat_new_row" class="hidden" style="display:flex;gap:6px;margin-top:6px;"><input id="f_cat_new_icon" style="width:50px;" placeholder="👗"><input id="f_cat_new_name" placeholder="Nome da categoria" style="flex:1;"><button type="button" class="btn small outline" onclick="addCategoryInline(\'f_cat\')">Adicionar</button></div></div>';
   html += '</div>';
   let entryVal = p.entry_value, costIdx = p.cost_index, saleIdx = p.sale_index;
   if(entryVal==null){
@@ -1419,6 +1419,22 @@ async function openProductForm(id){
   html += '<button class="btn outline" onclick="closeModal()">Cancelar</button>';
   html += '</div>';
   openModal(html);
+}
+function toggleInlineNewCategory(selectId){
+  document.getElementById(selectId+'_new_row').classList.toggle('hidden');
+}
+async function addCategoryInline(selectId){
+  const icon = document.getElementById(selectId+'_new_icon').value.trim() || '🏷️';
+  const name = document.getElementById(selectId+'_new_name').value.trim();
+  if(!name){ toast('Informe o nome da categoria.'); return; }
+  const inserted = await q(SUPA.from('categories').insert([{ name, icon }]).select());
+  const cats = await getCategories(true);
+  const sel = document.getElementById(selectId);
+  sel.innerHTML = cats.map(c=>'<option value="'+c.id+'"'+(c.id===inserted[0].id?' selected':'')+'>'+escapeHtml(c.icon+' '+c.name)+'</option>').join('');
+  document.getElementById(selectId+'_new_icon').value = '';
+  document.getElementById(selectId+'_new_name').value = '';
+  document.getElementById(selectId+'_new_row').classList.add('hidden');
+  toast('Categoria adicionada.');
 }
 function recalcCostFromIndex(){
   const entry = Number(document.getElementById('f_entry').value)||0;
@@ -2189,11 +2205,11 @@ async function openPurchaseForm(){
   const products = await getProductsLite(true);
   const fornecedores = await getFornecedores();
   const supplierField = fornecedores.length
-    ? '<select id="pu_supplier"><option value="">Selecione...</option>'+fornecedores.map(f=>'<option value="'+escapeHtml(f.name)+'">'+escapeHtml(f.name)+'</option>').join('')+'</select>'
+    ? '<select id="pu_supplier"><option value="">Selecione...</option>'+fornecedores.map(f=>'<option value="'+escapeHtml(f.name)+'">'+escapeHtml(f.name)+'</option>').join('')+'</select><div id="pu_supplier_new_row" class="hidden" style="display:flex;gap:6px;margin-top:6px;"><input id="pu_supplier_new_name" placeholder="Nome do novo fornecedor" style="flex:1;"><button type="button" class="btn small outline" onclick="addFornecedorInline()">Adicionar</button></div>'
     : '<input id="pu_supplier" placeholder="Nome do fornecedor">';
   let html = '<h3>Nova compra</h3>';
   if(!fornecedores.length){ html += '<div class="note">Dica: cadastre fornecedores na aba <strong>Fornecedores</strong> pra escolher numa lista da próxima vez, em vez de digitar.</div>'; }
-  html += '<div class="form-row"><div class="field"><label>Fornecedor</label>'+supplierField+'</div><div class="field"><label>Data</label><input id="pu_date" type="date" value="'+todayISO()+'"></div></div>';
+  html += '<div class="form-row"><div class="field"><label>Fornecedor'+(fornecedores.length?' <a onclick="toggleInlineNewFornecedor()" style="cursor:pointer;font-weight:600;font-size:11.5px;color:var(--wine);">+ novo</a>':'')+'</label>'+supplierField+'</div><div class="field"><label>Data</label><input id="pu_date" type="date" value="'+todayISO()+'"></div></div>';
   html += '<div class="field" style="margin-bottom:8px;"><label>📷 Bipar código de barras (soma 1 unidade a cada leitura)</label><input id="pu_barcode" placeholder="Clique aqui e escaneie..." onkeydown="if(event.key===\'Enter\'){ event.preventDefault(); scanBarcodePurchase(); }"></div>';
   html += '<div id="pu_items_area"></div>';
   html += '<div class="form-row" style="align-items:end;">';
@@ -2211,6 +2227,21 @@ async function openPurchaseForm(){
     renderPurchaseItemsArea(products);
     document.getElementById('pu_barcode').focus();
   }
+}
+function toggleInlineNewFornecedor(){
+  document.getElementById('pu_supplier_new_row').classList.toggle('hidden');
+}
+async function addFornecedorInline(){
+  const name = document.getElementById('pu_supplier_new_name').value.trim();
+  if(!name){ toast('Informe o nome do fornecedor.'); return; }
+  await q(SUPA.from('fornecedores').insert([{ name: name }]));
+  const fornecedores = await getFornecedores(true);
+  const sel = document.getElementById('pu_supplier');
+  sel.innerHTML = '<option value="">Selecione...</option>'+fornecedores.map(f=>'<option value="'+escapeHtml(f.name)+'">'+escapeHtml(f.name)+'</option>').join('');
+  sel.value = name;
+  document.getElementById('pu_supplier_new_name').value = '';
+  document.getElementById('pu_supplier_new_row').classList.add('hidden');
+  toast('Fornecedor adicionado.');
 }
 function scanBarcodePurchase(){
   const input = document.getElementById('pu_barcode');
@@ -2431,7 +2462,7 @@ async function openSaleForm(){
   } else {
     const sellers = await getSellersLite(true);
     html += '<div class="form-row"><div class="field"><label>Forma de pagamento</label><select id="sa_payment"><option>Pix</option><option>Dinheiro</option><option>Cartão de crédito</option><option>Cartão de débito</option><option>Boleto</option></select></div>';
-    html += '<div class="field"><label>Vendedor(a) (opcional)</label><select id="sa_seller"><option value="">— sem vendedor(a) —</option>'+sellers.filter(sl=>sl.active!==false).map(sl=>'<option value="'+sl.id+'">'+escapeHtml(sl.name)+'</option>').join('')+'</select></div></div>';
+    html += '<div class="field"><label>Vendedor(a) (opcional) <a onclick="toggleInlineNewSeller(\'sa_seller\')" style="cursor:pointer;font-weight:600;font-size:11.5px;color:var(--wine);">+ novo(a)</a></label><select id="sa_seller"><option value="">— sem vendedor(a) —</option>'+sellers.filter(sl=>sl.active!==false).map(sl=>'<option value="'+sl.id+'">'+escapeHtml(sl.name)+'</option>').join('')+'</select><div id="sa_seller_new_row" class="hidden" style="display:flex;gap:6px;margin-top:6px;"><input id="sa_seller_new_name" placeholder="Nome" style="flex:1;"><button type="button" class="btn small outline" onclick="addSellerInline(\'sa_seller\')">Adicionar</button></div></div></div>';
   }
   html += '<div class="field" style="margin-bottom:8px;"><label>📷 Bipar código de barras (soma 1 unidade a cada leitura)</label><input id="sa_barcode" placeholder="Clique aqui e escaneie..." onkeydown="if(event.key===\'Enter\'){ event.preventDefault(); scanBarcodeSale(); }"></div>';
   html += '<div id="sa_items_area"></div>';
@@ -2608,7 +2639,7 @@ async function openBagForm(){
   html += '<div id="bg_customer_info" class="note hidden" style="margin-bottom:8px;"></div>';
   if(!isComercial){
     const sellers = await getSellersLite(true);
-    html += '<div class="field" style="margin-bottom:8px;"><label>Vendedor(a) (opcional)</label><select id="bg_seller"><option value="">— sem vendedor(a) —</option>'+sellers.filter(sl=>sl.active!==false).map(sl=>'<option value="'+sl.id+'">'+escapeHtml(sl.name)+'</option>').join('')+'</select></div>';
+    html += '<div class="field" style="margin-bottom:8px;"><label>Vendedor(a) (opcional) <a onclick="toggleInlineNewSeller(\'bg_seller\')" style="cursor:pointer;font-weight:600;font-size:11.5px;color:var(--wine);">+ novo(a)</a></label><select id="bg_seller"><option value="">— sem vendedor(a) —</option>'+sellers.filter(sl=>sl.active!==false).map(sl=>'<option value="'+sl.id+'">'+escapeHtml(sl.name)+'</option>').join('')+'</select><div id="bg_seller_new_row" class="hidden" style="display:flex;gap:6px;margin-top:6px;"><input id="bg_seller_new_name" placeholder="Nome" style="flex:1;"><button type="button" class="btn small outline" onclick="addSellerInline(\'bg_seller\')">Adicionar</button></div></div>';
   }
   html += '<div class="field" style="margin-bottom:8px;"><label>Prazo pra devolver/decidir (também é o vencimento da nota promissória)</label><input id="bg_deadline" type="datetime-local" value="'+toDatetimeLocalValue(defaultDeadline)+'"></div>';
   html += '<div class="field" style="margin-bottom:8px;"><label>📷 Bipar código de barras (soma 1 unidade a cada leitura)</label><input id="bg_barcode" placeholder="Clique aqui e escaneie..." onkeydown="if(event.key===\'Enter\'){ event.preventDefault(); scanBarcodeBag(); }"></div>';
@@ -2994,6 +3025,21 @@ async function getSellersLite(force){
   }
   return sellersLiteCache;
 }
+function toggleInlineNewSeller(selectId){
+  document.getElementById(selectId+'_new_row').classList.toggle('hidden');
+}
+async function addSellerInline(selectId){
+  const name = document.getElementById(selectId+'_new_name').value.trim();
+  if(!name){ toast('Informe o nome do(a) vendedor(a).'); return; }
+  const inserted = await q(SUPA.from('sellers').insert([{ name: name, commission_percent:0, active:true }]).select());
+  const sellers = await getSellersLite(true);
+  const sel = document.getElementById(selectId);
+  sel.innerHTML = '<option value="">— sem vendedor(a) —</option>'+sellers.filter(function(sl){return sl.active!==false;}).map(function(sl){ return '<option value="'+sl.id+'">'+escapeHtml(sl.name)+'</option>'; }).join('');
+  sel.value = inserted[0].id;
+  document.getElementById(selectId+'_new_name').value = '';
+  document.getElementById(selectId+'_new_row').classList.add('hidden');
+  toast('Vendedor(a) adicionado(a). A comissão está em 0% — ajuste em Vendedor(es) se precisar.');
+}
 function round2(n){ return Math.round((Number(n)||0)*100)/100; }
 function jsStr(s){ return String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 const MIGRACAO_FASE2_AVISO = '<div class="note">⚠️ As tabelas de <strong>vendedor(es)</strong> ainda não existem no seu banco. Abra o Supabase, vá em <strong>SQL Editor &gt; New query</strong>, cole o conteúdo do arquivo <strong>migracao-fase2.sql</strong> e clique em Run. Depois volte aqui e recarregue a página.</div>';
@@ -3182,7 +3228,8 @@ async function calcComissoes(){
     el.innerHTML = '<div class="empty">Nenhuma venda com vendedor(a) atribuído(a) nesse período.</div>';
     return;
   }
-  let html = '<div class="card"><table><tr><th>Vendedor(a)</th><th>Total vendido</th><th>Comissão</th><th>Valor</th><th>Status</th><th></th></tr>';
+  let html = '<div class="row-actions" style="justify-content:flex-end;margin-bottom:6px;"><button type="button" class="btn small outline" onclick="hideComissoes()">✕ Ocultar resultado</button></div>';
+  html += '<div class="card"><table><tr><th>Vendedor(a)</th><th>Total vendido</th><th>Comissão</th><th>Valor</th><th>Status</th><th></th></tr>';
   commResultsCache = [];
   sellerIds.forEach(function(sid){
     const d = bySeller[sid];
@@ -3196,6 +3243,10 @@ async function calcComissoes(){
   });
   html += '</table></div>';
   el.innerHTML = html;
+}
+function hideComissoes(){
+  const el = document.getElementById('comm_results');
+  if(el) el.innerHTML = '';
 }
 
 async function payCommission(sellerId, periodStart, periodEnd, totalSales, commissionAmount, sellerName){
