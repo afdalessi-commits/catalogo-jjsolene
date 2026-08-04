@@ -228,23 +228,32 @@ function toggleFavorite(id){
   if(CATALOG.activeTab==="favoritos"){ buildViewFavoritos(); }
 }
 function money(n){ return "R$ " + (Number(n)||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function installmentChargeTotal(baseTotal, n, settings){
+  var freeMax = Number(settings.installments_free_max)||0;
+  if(n<=1 || n<=freeMax) return baseTotal;
+  var feeTable = settings.infinitepay_fee_table || {};
+  var fee = Number(feeTable[String(n)]);
+  if(!(fee>0)){ fee = (Number(settings.installments_interest_rate)||0)*n; }
+  return baseTotal*(1+fee/100);
+}
 function installmentLines(p, settings){
   var useOverride = p.installments_override;
   var max = useOverride ? (Number(p.installments_max)||1) : (Number(settings.installments_max)||3);
   var freeMax = useOverride ? (Number(p.installments_free_max)||0) : (Number(settings.installments_free_max)||0);
-  var rate = useOverride ? (Number(p.installments_interest_rate)||0) : (Number(settings.installments_interest_rate)||0);
   if(freeMax>max) freeMax = max;
   if(max<=1) return [];
   var lines = [];
   if(freeMax>=2){
     lines.push(freeMax+"x de "+money(p.sale_price/freeMax)+" sem juros");
   }
-  if(max>freeMax && rate>0){
-    var totalWithInterest = p.sale_price * (1 + (rate/100)*max);
-    var prefix = lines.length ? "ou em até " : "em até ";
-    lines.push(prefix+max+"x de "+money(totalWithInterest/max)+" com juros");
-  } else if(max>freeMax && rate<=0 && freeMax<2){
-    lines.push(max+"x de "+money(p.sale_price/max)+" sem juros");
+  if(max>freeMax){
+    var totalWithInterest = installmentChargeTotal(p.sale_price, max, settings);
+    if(totalWithInterest > p.sale_price){
+      var prefix = lines.length ? "ou em até " : "em até ";
+      lines.push(prefix+max+"x de "+money(totalWithInterest/max)+" com juros");
+    } else if(freeMax<2){
+      lines.push(max+"x de "+money(p.sale_price/max)+" sem juros");
+    }
   }
   return lines;
 }
@@ -951,8 +960,16 @@ function renderCart(){
   }
   footHtml += "<button class=\"checkout-btn\" id=\"checkoutBtn\" onclick=\"checkout()\">Finalizar pedido (Pix / combinar)</button>";
   if(CATALOG.settings.infinitepay_handle){
+    var maxInst = Math.max(1, Math.min(12, Number(CATALOG.settings.installments_max)||3));
+    var freeMaxChk = Math.max(0, Math.min(maxInst, Number(CATALOG.settings.installments_free_max)||0));
+    var instOptionsHtml = "";
+    for(var ni=1; ni<=maxInst; ni++){
+      var chargeN = installmentChargeTotal(total, ni, CATALOG.settings);
+      instOptionsHtml += "<option value=\""+ni+"\">"+ni+"x de "+money(chargeN/ni)+(ni<=freeMaxChk?" sem juros":" com juros")+"</option>";
+    }
+    footHtml += "<div class=\"field\" style=\"margin:8px 0;\"><label style=\"font-size:12px;color:#8a7568;display:block;margin-bottom:4px;\">Parcelamento no cartão</label><select id=\"chk_installments\" style=\"width:100%;\">"+instOptionsHtml+"</select></div>";
     footHtml += "<button class=\"checkout-btn card\" id=\"checkoutCardBtn\" onclick=\"checkoutCard()\">Pagar com cartão</button>";
-    footHtml += "<div class=\"checkout-note\">Pix ou cartão em até 12x, via InfinitePay</div>";
+    footHtml += "<div class=\"checkout-note\">Pix ou cartão em até "+maxInst+"x, via InfinitePay</div>";
   }
   if(CATALOG.settings.pix_key){
     footHtml += "<div class=\"pix-box\"><strong>Pix:</strong> "+esc(CATALOG.settings.pix_key)+"<br>Titular: "+esc(CATALOG.settings.pix_titular||"")+"<br>"+esc(CATALOG.settings.payment_note||"")+"</div>";
@@ -1002,6 +1019,8 @@ async function checkoutCard(){
   if(!source){ alert("Conta pra gente como você conheceu a JJ Solene antes de continuar."); return; }
   var handle = CATALOG.settings.infinitepay_handle;
   if(!handle){ alert("Pagamento por cartão ainda não configurado pela loja."); return; }
+  var instSel = document.getElementById("chk_installments");
+  var installments = instSel ? (Number(instSel.value)||1) : 1;
   var btn = document.getElementById("checkoutCardBtn");
   btn.disabled = true; btn.textContent = "Preparando pagamento...";
   var orderId = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())+"-"+Math.random().toString(36).slice(2));
@@ -1016,13 +1035,17 @@ async function checkoutCard(){
   }
   try{ await sb.rpc("set_order_referral_source", { p_order_id: orderId, p_source: source }); }catch(e){}
   try{ await sb.rpc("set_order_payment_method", { p_order_id: orderId, p_method: "cartao_pendente" }); }catch(e){}
+  try{ await sb.rpc("set_order_installments", { p_order_id: orderId, p_installments: installments }); }catch(e){}
   try{ await sb.rpc("upsert_customer", { p_name: name, p_phone: phone, p_email: null, p_birth_day: null, p_birth_month: null, p_cpf: null }); }catch(e){}
-  var chargeTotal = (res.data && res.data.total!=null) ? res.data.total : cartSubtotal();
+  var baseTotal = (res.data && res.data.total!=null) ? res.data.total : cartSubtotal();
+  var chargeTotal = installmentChargeTotal(baseTotal, installments, CATALOG.settings);
   var itemCount = cart.filter(function(it){return !it.isGift;}).reduce(function(s,it){return s+it.qty;},0);
   var hasDiscount = (res.data && res.data.discount_amount > 0) || cart.some(function(it){ return !it.isGift && lineUnitPrice(it) < it.price; });
+  var marked = Math.round(chargeTotal*100) !== Math.round(baseTotal*100);
   var ipItems;
-  if(hasDiscount){
-    ipItems = [{ quantity: 1, price: Math.round(chargeTotal*100), description: "Pedido "+name+" ("+itemCount+" peça(s))" }];
+  if(hasDiscount || marked){
+    var instDesc = installments>1 ? (" em "+installments+"x") : "";
+    ipItems = [{ quantity: 1, price: Math.round(chargeTotal*100), description: "Pedido "+name+" ("+itemCount+" peça(s))"+instDesc }];
   } else {
     ipItems = cart.filter(function(it){return !it.isGift;}).map(function(it){ return { quantity: it.qty, price: Math.round(it.price*100), description: it.name + " (Tam " + it.size + ")" }; });
   }

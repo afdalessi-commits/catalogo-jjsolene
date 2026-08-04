@@ -1125,13 +1125,31 @@ function exportPedidosPDF(){
 }
 async function confirmOrderAction(id){
   if(!confirm('Confirmar este pedido como pago? Isso vai baixar o estoque e lançar a receita no financeiro.')) return;
-  const orderRows = await q(SUPA.from('orders').select('phone,total').eq('id', id));
+  const orderRows = await q(SUPA.from('orders').select('phone,total,customer,payment_method,installments').eq('id', id));
   const order = orderRows[0];
   const saleId = await q(SUPA.rpc('confirm_order', { p_order_id: id }));
   try{ await applyCashbackRules(order ? order.phone : null, order ? Number(order.total)||0 : 0, saleId); }catch(e){ console.error('Erro ao aplicar regra de cashback:', e); }
+  if(order && order.payment_method==='cartao_infinitepay' && order.installments){
+    try{ await recordInfinitePayAbsorbedFee(order, saleId); }catch(e){ console.error('Erro ao lançar taxa de parcelamento:', e); }
+  }
   toast('Pedido confirmado. Venda registrada.');
   await renderPedidos();
   refreshPedidosBadge();
+}
+async function recordInfinitePayAbsorbedFee(order, saleId){
+  const settings = await getSettings();
+  const freeMax = Number(settings.installments_free_max)||0;
+  if(order.installments > freeMax) return;
+  const feeTable = settings.infinitepay_fee_table || {};
+  const feePercent = Number(feeTable[String(order.installments)])||0;
+  if(feePercent<=0) return;
+  const feeAmount = round2(Number(order.total)*(feePercent/100));
+  if(feeAmount<=0) return;
+  await q(SUPA.from('finance').insert([{
+    date: todayISO(), type:'despesa', category:'Taxa de parcelamento',
+    description:'Taxa de parcelamento InfinitePay — '+order.installments+'x — '+(order.customer||'Cliente'),
+    amount: feeAmount, status:'pago', origin:'taxa_parcelamento', ref_id: saleId
+  }]));
 }
 async function cancelOrderAction(id){
   if(!confirm('Cancelar este pedido? O estoque reservado será liberado.')) return;
@@ -4367,23 +4385,32 @@ const CATALOG_JS = [
 '  if(CATALOG.activeTab==="favoritos"){ buildViewFavoritos(); }',
 '}',
 'function money(n){ return "R$ " + (Number(n)||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2}); }',
+'function installmentChargeTotal(baseTotal, n, settings){',
+'  var freeMax = Number(settings.installments_free_max)||0;',
+'  if(n<=1 || n<=freeMax) return baseTotal;',
+'  var feeTable = settings.infinitepay_fee_table || {};',
+'  var fee = Number(feeTable[String(n)]);',
+'  if(!(fee>0)){ fee = (Number(settings.installments_interest_rate)||0)*n; }',
+'  return baseTotal*(1+fee/100);',
+'}',
 'function installmentLines(p, settings){',
 '  var useOverride = p.installments_override;',
 '  var max = useOverride ? (Number(p.installments_max)||1) : (Number(settings.installments_max)||3);',
 '  var freeMax = useOverride ? (Number(p.installments_free_max)||0) : (Number(settings.installments_free_max)||0);',
-'  var rate = useOverride ? (Number(p.installments_interest_rate)||0) : (Number(settings.installments_interest_rate)||0);',
 '  if(freeMax>max) freeMax = max;',
 '  if(max<=1) return [];',
 '  var lines = [];',
 '  if(freeMax>=2){',
 '    lines.push(freeMax+"x de "+money(p.sale_price/freeMax)+" sem juros");',
 '  }',
-'  if(max>freeMax && rate>0){',
-'    var totalWithInterest = p.sale_price * (1 + (rate/100)*max);',
-'    var prefix = lines.length ? "ou em até " : "em até ";',
-'    lines.push(prefix+max+"x de "+money(totalWithInterest/max)+" com juros");',
-'  } else if(max>freeMax && rate<=0 && freeMax<2){',
-'    lines.push(max+"x de "+money(p.sale_price/max)+" sem juros");',
+'  if(max>freeMax){',
+'    var totalWithInterest = installmentChargeTotal(p.sale_price, max, settings);',
+'    if(totalWithInterest > p.sale_price){',
+'      var prefix = lines.length ? "ou em até " : "em até ";',
+'      lines.push(prefix+max+"x de "+money(totalWithInterest/max)+" com juros");',
+'    } else if(freeMax<2){',
+'      lines.push(max+"x de "+money(p.sale_price/max)+" sem juros");',
+'    }',
 '  }',
 '  return lines;',
 '}',
@@ -5090,8 +5117,16 @@ const CATALOG_JS = [
 '  }',
 '  footHtml += "<button class=\\"checkout-btn\\" id=\\"checkoutBtn\\" onclick=\\"checkout()\\">Finalizar pedido (Pix / combinar)</button>";',
 '  if(CATALOG.settings.infinitepay_handle){',
+'    var maxInst = Math.max(1, Math.min(12, Number(CATALOG.settings.installments_max)||3));',
+'    var freeMaxChk = Math.max(0, Math.min(maxInst, Number(CATALOG.settings.installments_free_max)||0));',
+'    var instOptionsHtml = "";',
+'    for(var ni=1; ni<=maxInst; ni++){',
+'      var chargeN = installmentChargeTotal(total, ni, CATALOG.settings);',
+'      instOptionsHtml += "<option value=\\""+ni+"\\">"+ni+"x de "+money(chargeN/ni)+(ni<=freeMaxChk?" sem juros":" com juros")+"</option>";',
+'    }',
+'    footHtml += "<div class=\\"field\\" style=\\"margin:8px 0;\\"><label style=\\"font-size:12px;color:#8a7568;display:block;margin-bottom:4px;\\">Parcelamento no cartão</label><select id=\\"chk_installments\\" style=\\"width:100%;\\">"+instOptionsHtml+"</select></div>";',
 '    footHtml += "<button class=\\"checkout-btn card\\" id=\\"checkoutCardBtn\\" onclick=\\"checkoutCard()\\">Pagar com cartão</button>";',
-'    footHtml += "<div class=\\"checkout-note\\">Pix ou cartão em até 12x, via InfinitePay</div>";',
+'    footHtml += "<div class=\\"checkout-note\\">Pix ou cartão em até "+maxInst+"x, via InfinitePay</div>";',
 '  }',
 '  if(CATALOG.settings.pix_key){',
 '    footHtml += "<div class=\\"pix-box\\"><strong>Pix:</strong> "+esc(CATALOG.settings.pix_key)+"<br>Titular: "+esc(CATALOG.settings.pix_titular||"")+"<br>"+esc(CATALOG.settings.payment_note||"")+"</div>";',
@@ -5141,6 +5176,8 @@ const CATALOG_JS = [
 '  if(!source){ alert("Conta pra gente como você conheceu a JJ Solene antes de continuar."); return; }',
 '  var handle = CATALOG.settings.infinitepay_handle;',
 '  if(!handle){ alert("Pagamento por cartão ainda não configurado pela loja."); return; }',
+'  var instSel = document.getElementById("chk_installments");',
+'  var installments = instSel ? (Number(instSel.value)||1) : 1;',
 '  var btn = document.getElementById("checkoutCardBtn");',
 '  btn.disabled = true; btn.textContent = "Preparando pagamento...";',
 '  var orderId = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())+"-"+Math.random().toString(36).slice(2));',
@@ -5155,13 +5192,17 @@ const CATALOG_JS = [
 '  }',
 '  try{ await sb.rpc("set_order_referral_source", { p_order_id: orderId, p_source: source }); }catch(e){}',
 '  try{ await sb.rpc("set_order_payment_method", { p_order_id: orderId, p_method: "cartao_pendente" }); }catch(e){}',
+'  try{ await sb.rpc("set_order_installments", { p_order_id: orderId, p_installments: installments }); }catch(e){}',
 '  try{ await sb.rpc("upsert_customer", { p_name: name, p_phone: phone, p_email: null, p_birth_day: null, p_birth_month: null, p_cpf: null }); }catch(e){}',
-'  var chargeTotal = (res.data && res.data.total!=null) ? res.data.total : cartSubtotal();',
+'  var baseTotal = (res.data && res.data.total!=null) ? res.data.total : cartSubtotal();',
+'  var chargeTotal = installmentChargeTotal(baseTotal, installments, CATALOG.settings);',
 '  var itemCount = cart.filter(function(it){return !it.isGift;}).reduce(function(s,it){return s+it.qty;},0);',
 '  var hasDiscount = (res.data && res.data.discount_amount > 0) || cart.some(function(it){ return !it.isGift && lineUnitPrice(it) < it.price; });',
+'  var marked = Math.round(chargeTotal*100) !== Math.round(baseTotal*100);',
 '  var ipItems;',
-'  if(hasDiscount){',
-'    ipItems = [{ quantity: 1, price: Math.round(chargeTotal*100), description: "Pedido "+name+" ("+itemCount+" peça(s))" }];',
+'  if(hasDiscount || marked){',
+'    var instDesc = installments>1 ? (" em "+installments+"x") : "";',
+'    ipItems = [{ quantity: 1, price: Math.round(chargeTotal*100), description: "Pedido "+name+" ("+itemCount+" peça(s))"+instDesc }];',
 '  } else {',
 '    ipItems = cart.filter(function(it){return !it.isGift;}).map(function(it){ return { quantity: it.qty, price: Math.round(it.price*100), description: it.name + " (Tam " + it.size + ")" }; });',
 '  }',
@@ -5401,8 +5442,21 @@ async function renderConfig(){
   html += '<div class="field"><label>Parcelas sem juros (até)</label><input id="cf_inst_free" type="number" min="0" max="12" value="'+(s.installments_free_max!=null?s.installments_free_max:3)+'"></div>';
   html += '<div class="field"><label>Máximo de parcelas (total)</label><input id="cf_inst_max" type="number" min="1" max="12" value="'+(s.installments_max||3)+'"></div>';
   html += '</div>';
-  html += '<div class="field" style="margin-bottom:8px;"><label>Taxa de juros ao mês (%) — usada só nas parcelas além do limite sem juros</label><input id="cf_inst_rate" type="number" min="0" step="0.01" value="'+(s.installments_interest_rate||0)+'"></div>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>Taxa de juros ao mês (%) — usada só se a taxa por parcela do InfinitePay (abaixo) não estiver preenchida</label><input id="cf_inst_rate" type="number" min="0" step="0.01" value="'+(s.installments_interest_rate||0)+'"></div>';
   html += '</div>';
+
+  html += '<div class="form-block"><h4>Taxas do InfinitePay por parcela (%)</h4>';
+  html += '<div class="note">Taxa real que o InfinitePay cobra da JJ Solene em cada quantidade de parcelas. Até o limite "Parcelas sem juros" (acima), a cliente paga sem juro nenhum — a JJ Solene absorve essa taxa, que é lançada automaticamente como despesa no Financeiro assim que o pedido é confirmado. Das parcelas seguintes em diante, o juro é embutido no preço mostrado pra cliente no checkout.</div>';
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:8px;margin-top:10px;">';
+  (function(){
+    var ipFees = s.infinitepay_fee_table || {};
+    var defaultFees = {1:4.2,2:6.09,3:7.01,4:7.91,5:8.80,6:9.67,7:12.59,8:13.42,9:14.25,10:15.06,11:15.87,12:16.86};
+    for(let n=1;n<=12;n++){
+      const val = (ipFees[String(n)]!=null) ? ipFees[String(n)] : defaultFees[n];
+      html += '<div class="field"><label>'+n+'x</label><input id="cf_ip_fee_'+n+'" type="number" min="0" step="0.01" value="'+val+'"></div>';
+    }
+  })();
+  html += '</div></div>';
 
   html += '<button class="btn" onclick="saveConfig()">Salvar configurações</button>';
 
@@ -5488,6 +5542,11 @@ async function saveConfig(){
     installments_max: Math.min(12, Math.max(1, Number(document.getElementById('cf_inst_max').value)||1)),
     installments_free_max: Math.min(12, Math.max(0, Number(document.getElementById('cf_inst_free').value)||0)),
     installments_interest_rate: Number(document.getElementById('cf_inst_rate').value)||0,
+    infinitepay_fee_table: (function(){
+      const t = {};
+      for(let n=1;n<=12;n++){ t[String(n)] = Number(document.getElementById('cf_ip_fee_'+n).value)||0; }
+      return t;
+    })(),
     auto_cancel_pix_hours: Math.max(1, Number(document.getElementById('cf_autocancel_pix').value)||24),
     auto_cancel_card_hours: Math.max(0.25, Number(document.getElementById('cf_autocancel_card').value)||1),
     updated_at: new Date().toISOString()
