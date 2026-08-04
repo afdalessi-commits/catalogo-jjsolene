@@ -218,6 +218,7 @@
     <div class="nav-item" data-tab="clientes"><span class="nav-icon">🧑‍🤝‍🧑</span> Clientes</div>
     <div class="nav-item" data-tab="marketing"><span class="nav-icon">📣</span> Marketing</div>
     <div class="nav-item" data-tab="financeiro"><span class="nav-icon">💰</span> Financeiro</div>
+    <div class="nav-item" data-tab="relatorios"><span class="nav-icon">📊</span> Relatórios</div>
     <div class="nav-item" data-tab="nf"><span class="nav-icon">🧾</span> Notas Fiscais</div>
     <div class="nav-item" data-tab="catalogo"><span class="nav-icon">🌐</span> Catálogo</div>
     <div class="nav-item" data-tab="config"><span class="nav-icon">⚙️</span> Configurações</div>
@@ -247,6 +248,7 @@
     <div id="tab-clientes" class="tab-panel hidden"></div>
     <div id="tab-marketing" class="tab-panel hidden"></div>
     <div id="tab-financeiro" class="tab-panel hidden"></div>
+    <div id="tab-relatorios" class="tab-panel hidden"></div>
     <div id="tab-nf" class="tab-panel hidden"></div>
     <div id="tab-catalogo" class="tab-panel hidden"></div>
     <div id="tab-config" class="tab-panel hidden"></div>
@@ -509,7 +511,7 @@ async function refreshPedidosBadge(){
    ============================================================ */
 const TAB_TITLES = {
   dashboard:'Dashboard', agenda:'Agenda', pedidos:'Pedidos', estoque:'Estoque', inventario:'Inventário', compras:'Compras', fornecedores:'Fornecedores', vendas:'Vendas', bagdelivery:'Bag Delivery',
-  vendedores:'Vendedor(es)', clientes:'Clientes', marketing:'Marketing', financeiro:'Financeiro', nf:'Notas Fiscais', catalogo:'Catálogo', config:'Configurações'
+  vendedores:'Vendedor(es)', clientes:'Clientes', marketing:'Marketing', financeiro:'Financeiro', relatorios:'Relatórios', nf:'Notas Fiscais', catalogo:'Catálogo', config:'Configurações'
 };
 async function showTab(name){
   if(currentProfile && currentProfile.role==='comercial' && COMERCIAL_ALLOWED_TABS.indexOf(name)===-1){
@@ -535,6 +537,7 @@ async function renderTab(name){
   if(name==='clientes') await renderClientes();
   if(name==='marketing') await renderMarketing();
   if(name==='financeiro') await renderFinanceiro();
+  if(name==='relatorios') await renderRelatorios();
   if(name==='nf') await renderNF();
   if(name==='catalogo') await renderCatalogoTab();
   if(name==='config') await renderConfig();
@@ -3779,6 +3782,231 @@ function exportFinancePDF(){
   const d = financeReportData();
   printReport('Financeiro', d.headers, d.rows);
 }
+
+/* ============================================================
+   RELATÓRIOS (Curva ABC, giro de estoque, desempenho vendedor(a) x categoria)
+   ============================================================ */
+let abcCurveCache = [];
+let stockTurnoverCache = [];
+let vendorCategoryCache = [];
+function relatoriosPeriodRange(){
+  const sel = document.getElementById('rel_period');
+  const days = sel ? Number(sel.value) : 90;
+  const end = todayISO();
+  let start;
+  if(days === 0){ start = '2000-01-01'; }
+  else { const d = new Date(); d.setDate(d.getDate()-days); start = d.toISOString().slice(0,10); }
+  return { start: start, end: end };
+}
+async function renderRelatorios(){
+  const el = document.getElementById('tab-relatorios');
+  el.innerHTML = '<div class="empty">Carregando...</div>';
+  let html = '<div class="page-desc">Análises pra ajudar a decidir o que repor, o que deixar sair de linha, e como cada vendedor(a) está performando por categoria.</div>';
+  html += '<div class="field" style="max-width:260px;margin-bottom:16px;"><label>Período (vendas consideradas)</label><select id="rel_period" onchange="refreshRelatorios()"><option value="30">Últimos 30 dias</option><option value="90" selected>Últimos 90 dias</option><option value="180">Últimos 6 meses</option><option value="365">Últimos 12 meses</option><option value="0">Tudo</option></select></div>';
+
+  html += '<div class="section-title">📈 Curva ABC de produtos</div>';
+  html += '<div class="page-desc" style="margin-top:-8px;">Ranqueia os produtos pelo faturamento no período. Classe A = quem puxa até 80% da receita (nunca deixar faltar); B = até 95%; C = cauda longa, candidatos a sair de linha.</div>';
+  html += '<div class="row-actions"><button class="btn outline" onclick="exportAbcCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportAbcPDF()">🖨️ Exportar PDF</button></div>';
+  html += '<div id="rel_abc" style="margin-top:10px;"></div>';
+
+  html += '<div class="section-title">🐌 Giro de estoque / peças paradas</div>';
+  html += '<div class="page-desc" style="margin-top:-8px;">Produtos com estoque hoje, ordenados por quanto tempo estão sem vender — ajuda a achar o que encalhou.</div>';
+  html += '<div class="row-actions"><button class="btn outline" onclick="exportTurnoverCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportTurnoverPDF()">🖨️ Exportar PDF</button></div>';
+  html += '<div id="rel_turnover" style="margin-top:10px;"></div>';
+
+  html += '<div class="section-title">🧑‍💼 Desempenho por vendedor(a) × categoria</div>';
+  html += '<div class="page-desc" style="margin-top:-8px;">Faturamento de cada vendedor(a) quebrado por categoria (vendas diretas + pedidos do catálogo com o cupom dela).</div>';
+  html += '<div class="row-actions"><button class="btn outline" onclick="exportVendorCatCSV()">⬇️ Exportar CSV</button> <button class="btn outline" onclick="exportVendorCatPDF()">🖨️ Exportar PDF</button></div>';
+  html += '<div id="rel_vendorcat" style="margin-top:10px;"></div>';
+
+  el.innerHTML = html;
+  await refreshRelatorios();
+}
+async function refreshRelatorios(){
+  const range = relatoriosPeriodRange();
+  await Promise.all([ loadAbcCurve(range), loadStockTurnover(range), loadVendorCategoryReport(range) ]);
+}
+async function loadAbcCurve(range){
+  const el = document.getElementById('rel_abc');
+  el.innerHTML = '<div class="empty">Calculando...</div>';
+  const [cats, products, saleItemsR] = await Promise.all([
+    getCategories(),
+    q(SUPA.from('products').select('id,name,category_id,keep_visible_sold_out')),
+    SUPA.from('sale_items').select('qty,price,product_id,sales(date)')
+  ]);
+  if(saleItemsR.error){ console.error(saleItemsR.error); el.innerHTML = '<div class="empty">Erro ao carregar vendas.</div>'; return; }
+  const catNameById = {}; cats.forEach(function(c){ catNameById[c.id] = c.name; });
+  const prodById = {}; products.forEach(function(p){ prodById[p.id] = p; });
+  const byProduct = {};
+  (saleItemsR.data||[]).forEach(function(si){
+    if(!si.sales || !si.sales.date) return;
+    if(si.sales.date < range.start || si.sales.date > range.end) return;
+    if(!byProduct[si.product_id]) byProduct[si.product_id] = { qty:0, total:0 };
+    byProduct[si.product_id].qty += Number(si.qty)||0;
+    byProduct[si.product_id].total += (Number(si.qty)||0)*(Number(si.price)||0);
+  });
+  const rows = Object.keys(byProduct).map(function(pid){
+    const p = prodById[pid];
+    return {
+      id: pid, exists: !!p, name: p ? p.name : '(produto excluído)', category: p ? (catNameById[p.category_id]||'—') : '—',
+      keepVisible: p ? !!p.keep_visible_sold_out : false,
+      qty: byProduct[pid].qty, total: round2(byProduct[pid].total)
+    };
+  }).sort(function(a,b){ return b.total - a.total; });
+  const grandTotal = rows.reduce(function(s,r){ return s+r.total; }, 0);
+  let cum = 0;
+  rows.forEach(function(r){
+    cum += r.total;
+    r.pct = grandTotal>0 ? (r.total/grandTotal*100) : 0;
+    r.cumPct = grandTotal>0 ? (cum/grandTotal*100) : 0;
+    r.classe = r.cumPct<=80 ? 'A' : (r.cumPct<=95 ? 'B' : 'C');
+  });
+  abcCurveCache = rows;
+  if(rows.length===0){ el.innerHTML = '<div class="empty">Nenhuma venda no período selecionado.</div>'; return; }
+  const countA = rows.filter(function(r){return r.classe==='A';}).length;
+  const countB = rows.filter(function(r){return r.classe==='B';}).length;
+  const countC = rows.filter(function(r){return r.classe==='C';}).length;
+  let html = '<div class="note" style="margin-bottom:10px;">Classe A: '+countA+' produto(s) · Classe B: '+countB+' · Classe C: '+countC+' — de '+rows.length+' produto(s) com venda no período.</div>';
+  html += '<div class="card"><table><tr><th>#</th><th>Produto</th><th>Categoria</th><th>Qtd vendida</th><th>Faturamento</th><th>% do total</th><th>% acumulado</th><th>Classe</th><th></th></tr>';
+  rows.forEach(function(r,idx){
+    const classeTag = r.classe==='A' ? 'ok' : (r.classe==='B' ? 'info' : 'warn');
+    html += '<tr><td>'+(idx+1)+'</td><td>'+escapeHtml(r.name)+'</td><td>'+escapeHtml(r.category)+'</td><td>'+r.qty+'</td><td>'+fmtMoney(r.total)+'</td><td>'+r.pct.toFixed(1)+'%</td><td>'+r.cumPct.toFixed(1)+'%</td><td><span class="tag '+classeTag+'">'+r.classe+'</span></td>';
+    html += '<td>'+(!r.exists ? '' : (r.keepVisible ? '<span class="tag ok">mantém esgotado</span>' : '<button class="btn small outline" onclick="quickSetKeepVisible(\''+r.id+'\')">Manter visível esgotado</button>'))+'</td></tr>';
+  });
+  html += '</table></div>';
+  el.innerHTML = html;
+}
+async function quickSetKeepVisible(productId){
+  await q(SUPA.from('products').update({ keep_visible_sold_out: true }).eq('id', productId));
+  toast('Produto marcado pra continuar visível no catálogo quando esgotar.');
+  await loadAbcCurve(relatoriosPeriodRange());
+}
+function abcReportData(){
+  const headers = ['#','Produto','Categoria','Qtd vendida','Faturamento','% do total','% acumulado','Classe'];
+  const rows = (abcCurveCache||[]).map(function(r,idx){
+    return [idx+1, r.name, r.category, r.qty, String(r.total).replace('.',','), r.pct.toFixed(1)+'%', r.cumPct.toFixed(1)+'%', r.classe];
+  });
+  return { headers: headers, rows: rows };
+}
+function exportAbcCSV(){ const d = abcReportData(); downloadCSV('curva-abc-'+todayISO()+'.csv', d.headers, d.rows); }
+function exportAbcPDF(){ const d = abcReportData(); printReport('Curva ABC de Produtos', d.headers, d.rows); }
+
+async function loadStockTurnover(range){
+  const el = document.getElementById('rel_turnover');
+  el.innerHTML = '<div class="empty">Calculando...</div>';
+  const [cats, products, saleItemsR] = await Promise.all([
+    getCategories(),
+    q(SUPA.from('products').select('id,name,category_id,product_sizes(stock,reserved)')),
+    SUPA.from('sale_items').select('qty,product_id,sales(date)')
+  ]);
+  if(saleItemsR.error){ console.error(saleItemsR.error); el.innerHTML = '<div class="empty">Erro ao carregar vendas.</div>'; return; }
+  const catNameById = {}; cats.forEach(function(c){ catNameById[c.id] = c.name; });
+  const byProduct = {};
+  (saleItemsR.data||[]).forEach(function(si){
+    if(!si.sales || !si.sales.date) return;
+    if(!byProduct[si.product_id]) byProduct[si.product_id] = { qtyPeriod:0, lastSaleDate:null };
+    if(si.sales.date >= range.start && si.sales.date <= range.end){ byProduct[si.product_id].qtyPeriod += Number(si.qty)||0; }
+    if(!byProduct[si.product_id].lastSaleDate || si.sales.date > byProduct[si.product_id].lastSaleDate){ byProduct[si.product_id].lastSaleDate = si.sales.date; }
+  });
+  const todayD = todayISO();
+  const rows = products.map(function(p){
+    const total = stockTotal(p.product_sizes);
+    const d = byProduct[p.id] || { qtyPeriod:0, lastSaleDate:null };
+    const daysSince = d.lastSaleDate ? Math.floor((new Date(todayD)-new Date(d.lastSaleDate))/86400000) : null;
+    return { id:p.id, name:p.name, category: catNameById[p.category_id]||'—', stock: total, qtyPeriod: d.qtyPeriod, lastSaleDate: d.lastSaleDate, daysSince: daysSince };
+  }).filter(function(r){ return r.stock>0; })
+    .sort(function(a,b){ const da=a.daysSince===null?99999:a.daysSince; const db=b.daysSince===null?99999:b.daysSince; return db-da; });
+  stockTurnoverCache = rows;
+  if(rows.length===0){ el.innerHTML = '<div class="empty">Nenhum produto com estoque no momento.</div>'; return; }
+  let html = '<div class="card"><table><tr><th>Produto</th><th>Categoria</th><th>Estoque</th><th>Vendido no período</th><th>Última venda</th><th>Parado há</th></tr>';
+  rows.forEach(function(r){
+    const parado = r.daysSince===null || r.daysSince>60;
+    html += '<tr><td>'+escapeHtml(r.name)+'</td><td>'+escapeHtml(r.category)+'</td><td>'+r.stock+'</td><td>'+r.qtyPeriod+'</td><td>'+(r.lastSaleDate?fmtDate(r.lastSaleDate):'Nunca vendido')+'</td>';
+    html += '<td>'+(r.daysSince===null?'<span class="tag bad">nunca vendeu</span>':('<span class="tag'+(parado?' bad':' ok')+'">'+r.daysSince+' dia(s)'+(parado?' — parado':'')+'</span>'))+'</td></tr>';
+  });
+  html += '</table></div>';
+  el.innerHTML = html;
+}
+function turnoverReportData(){
+  const headers = ['Produto','Categoria','Estoque','Vendido no período','Última venda','Dias parado'];
+  const rows = (stockTurnoverCache||[]).map(function(r){
+    return [r.name, r.category, r.stock, r.qtyPeriod, r.lastSaleDate?fmtDate(r.lastSaleDate):'Nunca vendido', r.daysSince===null?'—':r.daysSince];
+  });
+  return { headers: headers, rows: rows };
+}
+function exportTurnoverCSV(){ const d = turnoverReportData(); downloadCSV('giro-estoque-'+todayISO()+'.csv', d.headers, d.rows); }
+function exportTurnoverPDF(){ const d = turnoverReportData(); printReport('Giro de Estoque', d.headers, d.rows); }
+
+async function loadVendorCategoryReport(range){
+  const el = document.getElementById('rel_vendorcat');
+  el.innerHTML = '<div class="empty">Calculando...</div>';
+  const cats = await getCategories();
+  const catNameById = {}; cats.forEach(function(c){ catNameById[c.id] = c.name; });
+
+  const saleItemsR = await SUPA.from('sale_items').select('qty,price,products(category_id),sales(seller_id,date,sellers(name))');
+  if(saleItemsR.error){ console.error(saleItemsR.error); el.innerHTML = '<div class="empty">Erro ao carregar vendas.</div>'; return; }
+
+  const couponsR = await SUPA.from('coupons').select('code,seller_id,sellers(name)').not('seller_id','is',null);
+  const couponMap = {}; (couponsR.data||[]).forEach(function(c){ couponMap[c.code] = c; });
+  const ordersR = (couponsR.data && couponsR.data.length)
+    ? await SUPA.from('orders').select('coupon_code,date,order_items(qty,price,products(category_id))').eq('status','confirmado').not('coupon_code','is',null)
+    : { data: [] };
+
+  const bySeller = {};
+  function addToSeller(sellerId, sellerName, catId, qty, total){
+    if(!bySeller[sellerId]) bySeller[sellerId] = { name: sellerName, categories:{}, total:0 };
+    if(!bySeller[sellerId].categories[catId]) bySeller[sellerId].categories[catId] = { qty:0, total:0 };
+    bySeller[sellerId].categories[catId].qty += qty;
+    bySeller[sellerId].categories[catId].total += total;
+    bySeller[sellerId].total += total;
+  }
+  (saleItemsR.data||[]).forEach(function(si){
+    if(!si.sales || !si.sales.seller_id) return;
+    if(!si.sales.date || si.sales.date<range.start || si.sales.date>range.end) return;
+    const catId = si.products ? (si.products.category_id||'sem-categoria') : 'sem-categoria';
+    addToSeller(si.sales.seller_id, si.sales.sellers?si.sales.sellers.name:'?', catId, Number(si.qty)||0, (Number(si.qty)||0)*(Number(si.price)||0));
+  });
+  (ordersR.data||[]).forEach(function(o){
+    const c = couponMap[o.coupon_code];
+    if(!c || !c.seller_id) return;
+    const oDate = o.date ? o.date.slice(0,10) : null;
+    if(!oDate || oDate<range.start || oDate>range.end) return;
+    (o.order_items||[]).forEach(function(it){
+      const catId = it.products ? (it.products.category_id||'sem-categoria') : 'sem-categoria';
+      addToSeller(c.seller_id, c.sellers?c.sellers.name:'?', catId, Number(it.qty)||0, (Number(it.qty)||0)*(Number(it.price)||0));
+    });
+  });
+
+  const sellerIds = Object.keys(bySeller).sort(function(a,b){ return bySeller[b].total - bySeller[a].total; });
+  vendorCategoryCache = [];
+  if(sellerIds.length===0){ el.innerHTML = '<div class="empty">Nenhuma venda atribuída a vendedor(a) no período.</div>'; return; }
+  let html = '';
+  sellerIds.forEach(function(sid){
+    const d = bySeller[sid];
+    const catIds = Object.keys(d.categories).sort(function(a,b){ return d.categories[b].total - d.categories[a].total; });
+    html += '<div class="card" style="margin-bottom:12px;padding:0;overflow:hidden;"><div style="font-weight:700;color:var(--wine-dark);padding:10px 12px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;">';
+    html += '<span>'+escapeHtml(d.name)+'</span><span>'+fmtMoney(round2(d.total))+'</span></div>';
+    html += '<table><tr><th>Categoria</th><th>Qtd</th><th>Faturamento</th><th>% do vendedor(a)</th></tr>';
+    catIds.forEach(function(cid){
+      const cd = d.categories[cid];
+      const catName = cid==='sem-categoria' ? 'Sem categoria' : (catNameById[cid]||'—');
+      const pct = d.total>0 ? (cd.total/d.total*100) : 0;
+      html += '<tr><td>'+escapeHtml(catName)+'</td><td>'+cd.qty+'</td><td>'+fmtMoney(round2(cd.total))+'</td><td>'+pct.toFixed(1)+'%</td></tr>';
+      vendorCategoryCache.push({ seller: d.name, category: catName, qty: cd.qty, total: round2(cd.total), pct: pct });
+    });
+    html += '</table></div>';
+  });
+  el.innerHTML = html;
+}
+function vendorCatReportData(){
+  const headers = ['Vendedor(a)','Categoria','Qtd','Faturamento','% do vendedor(a)'];
+  const rows = (vendorCategoryCache||[]).map(function(r){
+    return [r.seller, r.category, r.qty, String(r.total).replace('.',','), r.pct.toFixed(1)+'%'];
+  });
+  return { headers: headers, rows: rows };
+}
+function exportVendorCatCSV(){ const d = vendorCatReportData(); downloadCSV('desempenho-vendedor-categoria-'+todayISO()+'.csv', d.headers, d.rows); }
+function exportVendorCatPDF(){ const d = vendorCatReportData(); printReport('Desempenho por Vendedor(a) x Categoria', d.headers, d.rows); }
 
 /* ============================================================
    NOTAS FISCAIS (registro interno)
