@@ -410,7 +410,10 @@ async function loadData(){
   var g = await sb.from("gift_rules").select("*, products(id,name,sale_price,image_url,product_sizes(*))").order("min_total");
   CATALOG.settings = (s.data && s.data[0]) || {};
   CATALOG.categories = c.data || [];
-  CATALOG.products = p.data || [];
+  CATALOG.products = (p.data || []).filter(function(prod){
+    var hasStock = (prod.product_sizes||[]).some(function(sz){ return (Number(sz.stock)||0) - (Number(sz.reserved)||0) > 0; });
+    return hasStock || prod.keep_visible_sold_out === true;
+  });
   CATALOG.media = m.data || [];
   CATALOG.banners = b.data || [];
   CATALOG.giftRules = g.data || [];

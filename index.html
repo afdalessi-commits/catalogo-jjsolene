@@ -1313,7 +1313,7 @@ function exportEstoquePDF(){
 }
 async function openProductForm(id){
   const cats = await getCategories();
-  let p = { id:null, sku:'', name:'', category_id: cats[0]?cats[0].id:'', cost_price:0, sale_price:0, description:'', promo_text:'', show_in_catalog:true, image_url:'', ncm:'', color:'', discount_type:'none', discount_value:0, discount_min_qty:1, installments_override:false, installments_max:3, installments_free_max:3, installments_interest_rate:0, product_sizes:[{size:'P',stock:0,barcode:''},{size:'M',stock:0,barcode:''},{size:'G',stock:0,barcode:''}] };
+  let p = { id:null, sku:'', name:'', category_id: cats[0]?cats[0].id:'', cost_price:0, sale_price:0, description:'', promo_text:'', show_in_catalog:true, keep_visible_sold_out:false, image_url:'', ncm:'', color:'', discount_type:'none', discount_value:0, discount_min_qty:1, installments_override:false, installments_max:3, installments_free_max:3, installments_interest_rate:0, product_sizes:[{size:'P',stock:0,barcode:''},{size:'M',stock:0,barcode:''},{size:'G',stock:0,barcode:''}] };
   let media = [];
   if(id){
     const rows = await q(SUPA.from('products').select('*, product_sizes(*)').eq('id', id));
@@ -1387,7 +1387,9 @@ async function openProductForm(id){
   html += '</div>';
   html += '<div class="field" style="margin-bottom:8px;"><label>Descrição (aparece no catálogo)</label><textarea id="f_desc" rows="2">'+escapeHtml(p.description||'')+'</textarea></div>';
   html += '<div class="field" style="margin-bottom:8px;"><label>Selo/promoção (opcional, ex: "Últimas peças")</label><input id="f_promo" value="'+escapeHtml(p.promo_text||'')+'"></div>';
-  html += '<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px;"><label class="switch"><input type="checkbox" id="f_showcat" '+(p.show_in_catalog!==false?'checked':'')+'><span class="slider"></span></label> Exibir este produto no catálogo público</label>';
+  html += '<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:10px;"><label class="switch"><input type="checkbox" id="f_showcat" '+(p.show_in_catalog!==false?'checked':'')+'><span class="slider"></span></label> Exibir este produto no catálogo público</label>';
+  html += '<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:8px;"><label class="switch"><input type="checkbox" id="f_keep_soldout" '+(p.keep_visible_sold_out?'checked':'')+'><span class="slider"></span></label> Quando o estoque zerar, continuar aparecendo no catálogo como "Esgotado" (com o botão "Avise-me quando chegar")</label>';
+  html += '<div class="note" style="margin-bottom:14px;">Regra padrão (desligado): assim que o estoque zerar em todos os tamanhos, o produto some do catálogo automaticamente — e a categoria também some se ficar sem nenhum produto disponível. Ligue esta opção só pras peças com potencial de venda/captação que valem continuar visíveis mesmo esgotadas.</div>';
   html += '<div class="row-actions">';
   html += '<button class="btn" id="f_save_btn" onclick="saveProduct('+(id?"'"+id+"'":'null')+')">Salvar</button>';
   html += '<button class="btn outline" onclick="closeModal()">Cancelar</button>';
@@ -1608,6 +1610,7 @@ async function saveProduct(id){
       description: document.getElementById('f_desc').value.trim(),
       promo_text: document.getElementById('f_promo').value.trim(),
       show_in_catalog: document.getElementById('f_showcat').checked,
+      keep_visible_sold_out: document.getElementById('f_keep_soldout').checked,
       ncm: ncm,
       color: document.getElementById('f_color').value.trim(),
       color_hex: document.getElementById('f_color_hex').value,
@@ -4318,7 +4321,10 @@ const CATALOG_JS = [
 '  var g = await sb.from("gift_rules").select("*, products(id,name,sale_price,image_url,product_sizes(*))").order("min_total");',
 '  CATALOG.settings = (s.data && s.data[0]) || {};',
 '  CATALOG.categories = c.data || [];',
-'  CATALOG.products = p.data || [];',
+'  CATALOG.products = (p.data || []).filter(function(prod){',
+'    var hasStock = (prod.product_sizes||[]).some(function(sz){ return (Number(sz.stock)||0) - (Number(sz.reserved)||0) > 0; });',
+'    return hasStock || prod.keep_visible_sold_out === true;',
+'  });',
 '  CATALOG.media = m.data || [];',
 '  CATALOG.banners = b.data || [];',
 '  CATALOG.giftRules = g.data || [];',
