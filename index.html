@@ -312,7 +312,7 @@ async function deleteRow(table, id, opts){
   return true;
 }
 function openModal(html){
-  document.getElementById('modalRoot').innerHTML = '<div class="modal-bg" id="modalBg"><div class="modal">'+html+'</div></div>';
+  document.getElementById('modalRoot').innerHTML = '<div class="modal-bg" id="modalBg"><form class="modal" autocomplete="off" onsubmit="return false;">'+html+'</form></div>';
   document.getElementById('modalBg').addEventListener('click', (e)=>{ if(e.target.id==='modalBg') closeModal(); });
 }
 function closeModal(){ document.getElementById('modalRoot').innerHTML = ''; }
@@ -1201,7 +1201,7 @@ async function renderEstoque(){
     .sort((a,b)=> sizeSortRank(a)-sizeSortRank(b) || a.localeCompare(b,'pt-BR'));
 
   html += '<div class="estoque-filters">';
-  html += '<div class="field"><label>Buscar (nome ou SKU)</label><input id="es_search" placeholder="Digite para buscar..." oninput="applyEstoqueFilters()"></div>';
+  html += '<div class="field"><label>Buscar (nome ou SKU)</label><input id="es_search" placeholder="Digite para buscar..." autocomplete="off" oninput="applyEstoqueFilters()"></div>';
   html += '<div class="field"><label>Categoria</label><select id="es_cat" onchange="applyEstoqueFilters()"><option value="">Todas</option>'+cats.map(c=>'<option value="'+c.id+'">'+escapeHtml(c.icon+' '+c.name)+'</option>').join('')+'</select></div>';
   html += '<div class="field"><label>Cor</label><div class="color-select" id="es_color_select">';
   html += '<button type="button" class="color-select-btn" id="es_color_btn" onclick="toggleEstoqueColorMenu(event)"><span class="csb-label" id="es_color_btn_label">Todas</span><span class="csb-caret">▾</span></button>';
@@ -2024,7 +2024,7 @@ async function openInventoryScanScreen(sessionId){
   currentInventorySessionItems = await loadInventorySessionItems(sessionId);
   await getProductsLite(true);
   let html = '<div class="page-desc">Contagem '+(currentInventorySession.type==='total'?'Total':'Parcial')+' — iniciada em '+fmtDate(currentInventorySession.created_at)+'. Bipe as peças uma a uma; cada leitura soma 1 na contagem daquele tamanho. Peças sem código de barras cadastrado não podem ser bipadas — vão aparecer como "não bipadas" no relatório.</div>';
-  html += '<div class="field" style="margin-bottom:8px;"><label>📷 Bipar código de barras</label><input id="inv_barcode" placeholder="Clique aqui e escaneie..." onkeydown="if(event.key===\'Enter\'){ event.preventDefault(); scanBarcodeInventory(); }"></div>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>📷 Bipar código de barras</label><input id="inv_barcode" placeholder="Clique aqui e escaneie..." autocomplete="off" onkeydown="if(event.key===\'Enter\'){ event.preventDefault(); scanBarcodeInventory(); }"></div>';
   html += '<div class="row-actions" style="margin-bottom:12px;"><button class="btn" onclick="finishInventorySession()">Finalizar contagem e ver relatório</button> <button class="btn outline" onclick="renderInventario()">← Voltar (continuar depois)</button></div>';
   html += '<div class="section-title">Itens já contados</div>';
   html += '<div id="inv_tally_area"></div>';
@@ -5442,7 +5442,8 @@ async function renderConfig(){
   const el = document.getElementById('tab-config');
   el.innerHTML = '<div class="empty">Carregando...</div>';
   const [s, cats, teamProfiles, sellersForEq, cashbackRules] = await Promise.all([getSettings(), getCategories(true), q(SUPA.from('profiles').select('*, sellers(name)').order('created_at')), getSellersLite(true), q(SUPA.from('cashback_rules').select('*').order('type'))]);
-  let html = '<div class="page-desc">Dados da loja usados no catálogo público e nos recibos.</div>';
+  let html = '<form autocomplete="off" onsubmit="return false;">';
+  html += '<div class="page-desc">Dados da loja usados no catálogo público e nos recibos.</div>';
   html += '<div class="form-block"><h4>Loja</h4>';
   html += '<div class="form-row">';
   html += '<div class="field"><label>Nome da loja</label><input id="cf_name" value="'+escapeHtml(s.store_name)+'"></div>';
@@ -5574,6 +5575,7 @@ async function renderConfig(){
   html += '<div class="field" id="eq_seller_field" style="margin-bottom:8px;"><label>Vendedor(a) vinculado(a) (pra vendas do catálogo/manuais saírem no nome dela)</label><select id="eq_seller"><option value="">— nenhum —</option>'+sellersForEq.map(sl=>'<option value="'+sl.id+'">'+escapeHtml(sl.name)+'</option>').join('')+'</select></div>';
   html += '<button class="btn small" onclick="saveAccess()">+ Dar/atualizar acesso</button>';
   html += '</div>';
+  html += '</form>';
 
   el.innerHTML = html;
 }
