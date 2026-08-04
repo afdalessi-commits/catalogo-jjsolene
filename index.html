@@ -1320,7 +1320,8 @@ function showCropperLoading(message){
     + '</div></div>'
     + '<style>@keyframes spin{to{transform:rotate(360deg);}}</style>';
 }
-async function compositeOnWhite(blob){
+const CATALOG_PAGE_BG = '#f7efe2';
+async function compositeOnPageBg(blob){
   const img = await new Promise(function(resolve, reject){
     const im = new Image();
     im.onload = function(){ resolve(im); };
@@ -1332,25 +1333,26 @@ async function compositeOnWhite(blob){
   const rctx = raw.getContext('2d');
   rctx.drawImage(img,0,0);
   // Endurece o canal alfa (sem meio-termo) pra evitar "fantasmas" de sombra
-  // translúcida (ex: sombra do chão) que apareceriam como mancha acinzentada
-  // ao misturar com o branco em vez de sumir de vez.
+  // translúcida (ex: sombra do chão) que apareceriam como mancha ao
+  // misturar com o fundo em vez de sumir de vez. Corte mais rígido (190)
+  // pra tratar áreas de confiança duvidosa como fundo, não como produto.
   const imgData = rctx.getImageData(0,0,raw.width,raw.height);
   const d = imgData.data;
-  for(let i=3;i<d.length;i+=4){ d[i] = d[i] < 140 ? 0 : 255; }
+  for(let i=3;i<d.length;i+=4){ d[i] = d[i] < 190 ? 0 : 255; }
   rctx.putImageData(imgData,0,0);
 
   const canvas = document.createElement('canvas');
   canvas.width = raw.width; canvas.height = raw.height;
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#ffffff';
+  ctx.fillStyle = CATALOG_PAGE_BG;
   ctx.fillRect(0,0,canvas.width,canvas.height);
   ctx.drawImage(raw,0,0);
   return await new Promise(function(resolve){ canvas.toBlob(resolve, 'image/jpeg', 0.92); });
 }
-async function removeBackgroundToWhite(file){
+async function removeBackgroundToPageBg(file){
   const mod = await import('https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.5.8/dist/index.mjs');
   const noBgBlob = await mod.removeBackground(file, { model: 'isnet_quint8' });
-  return await compositeOnWhite(noBgBlob);
+  return await compositeOnPageBg(noBgBlob);
 }
 async function openPhotoCropper(input){
   const file = input.files[0];
@@ -1364,8 +1366,8 @@ async function openPhotoCropper(input){
   };
   showCropperLoading('Removendo o fundo da foto automaticamente… isso pode levar de 10 a 20 segundos.');
   try{
-    const whiteBlob = await removeBackgroundToWhite(file);
-    openPhotoCropOverlay(URL.createObjectURL(whiteBlob), onConfirm, { rawUrl: rawUrl });
+    const bgBlob = await removeBackgroundToPageBg(file);
+    openPhotoCropOverlay(URL.createObjectURL(bgBlob), onConfirm, { rawUrl: rawUrl });
   }catch(e){
     console.warn('Falha ao remover fundo automaticamente', e);
     toast('Não consegui remover o fundo automaticamente. Você pode recortar a foto original normalmente.');
@@ -1398,7 +1400,7 @@ function openPhotoCropOverlay(imageUrl, onConfirm, opts){
     };
   }
   document.getElementById('cropConfirmBtn').onclick = function(){
-    cropper.getCroppedCanvas({ width:1080, height:1350, fillColor:'#ffffff' }).toBlob(function(blob){
+    cropper.getCroppedCanvas({ width:1080, height:1350, fillColor:CATALOG_PAGE_BG }).toBlob(function(blob){
       cropper.destroy();
       root.innerHTML = '';
       onConfirm(blob);
