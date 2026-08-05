@@ -92,7 +92,6 @@ h1,h2,h3{font-family:"Playfair Display",serif;margin:0;}
 .myorders-box .ordrow{border-bottom:1px solid #eee;padding:8px 0;font-size:12.5px;}
 body{padding-bottom:76px;}
 .app-header{position:sticky;top:0;z-index:70;background:#fff;display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #f3e6df;}
-.header-nav{display:none;}
 .hamburger-btn{background:none;border:none;color:#4a1523;cursor:pointer;padding:4px;line-height:1;display:flex;align-items:center;}
 .hamburger-btn svg{width:23px;height:23px;}
 .hamburger-btn img{width:36px;height:36px;border-radius:50%;display:block;}
@@ -155,16 +154,6 @@ body{padding-bottom:76px;}
 .empty-view{padding:60px 20px;text-align:center;color:#8a7568;font-size:13px;}
 @media (min-width:640px){ .grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px;} .cat-icons-row{justify-content:center;} }
 @media (min-width:900px){
-  body{padding-bottom:0;}
-  .bottom-tabbar{display:none;}
-  .hamburger-btn{display:none;}
-  .app-header{padding:13px 32px;}
-  .header-logo-wrap{flex:none;justify-content:flex-start;}
-  .header-nav{display:flex;gap:26px;list-style:none;margin:0;padding:0;flex:1;justify-content:center;}
-  .header-nav a{text-decoration:none;color:#4a1523;font-weight:600;font-size:13px;padding-bottom:4px;border-bottom:2px solid transparent;cursor:pointer;}
-  .header-nav a:hover{color:#6b1f33;}
-  .header-nav a.active{color:#6b1f33;border-bottom-color:#6b1f33;}
-  .header-actions{gap:18px;}
   .grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px;}
   .site-footer .footer-feats,.site-footer .footer-main{max-width:1000px;}
 }
@@ -521,14 +510,6 @@ function buildHeader(data){
   logoWrap.innerHTML = data.settings.logo_url ? "<img src=\""+data.settings.logo_url+"\" alt=\"\">" : "<span class=\"wordmark\">"+esc(data.settings.store_name||"JJ Solene")+"</span>";
   logoWrap.style.cursor="pointer"; logoWrap.onclick=function(){ CATALOG.filterCategoryId=null; switchTab("inicio"); };
   header.appendChild(logoWrap);
-  var navDefs = [ ["inicio","Catálogo"], ["categorias","Categorias"], ["novidades","Novidades"], ["favoritos","Favoritos"] ];
-  var nav = document.createElement("nav"); nav.className="header-nav";
-  navDefs.forEach(function(nd){
-    var a = document.createElement("a"); a.textContent = nd[1]; a.dataset.navtab = nd[0]; if(CATALOG.activeTab===nd[0]) a.className="active";
-    a.onclick = function(){ CATALOG.filterCategoryId=null; switchTab(nd[0]); };
-    nav.appendChild(a);
-  });
-  header.appendChild(nav);
   var actions = document.createElement("div"); actions.className="header-actions";
   var searchBtn = document.createElement("button"); searchBtn.className="icon-btn"; searchBtn.innerHTML=UI_ICONS.search; searchBtn.title="Buscar produtos"; searchBtn.onclick=openSearch;
   actions.appendChild(searchBtn);
@@ -584,7 +565,6 @@ function switchTab(tab){
   Array.prototype.forEach.call(document.querySelectorAll(".view-panel"), function(el){ el.classList.remove("active"); });
   Array.prototype.forEach.call(document.querySelectorAll(".tab-item"), function(el){ el.classList.remove("active"); });
   var btn = document.getElementById("tabbtn-"+tab); if(btn) btn.classList.add("active");
-  Array.prototype.forEach.call(document.querySelectorAll(".header-nav a"), function(el){ el.classList.toggle("active", el.dataset.navtab===tab); });
   var panel = document.getElementById("view-"+tab);
   if(panel){ panel.classList.add("active"); }
   if(tab==="inicio") buildViewInicio();
