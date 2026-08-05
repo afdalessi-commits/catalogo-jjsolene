@@ -83,6 +83,17 @@ h1,h2,h3{font-family:"Playfair Display",serif;margin:0;}
 .coupon-msg{font-size:11.5px;margin:-4px 0 8px;}
 .coupon-msg.ok{color:#1e7d32;}
 .coupon-msg.err{color:#b3261e;}
+.shipping-box{margin-bottom:8px;}
+.shipping-row{display:flex;gap:6px;margin-bottom:6px;}
+.shipping-row input{flex:1;margin-bottom:0;}
+.shipping-row button{border:none;background:#2b1420;color:#fff;border-radius:8px;padding:0 12px;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap;}
+.shipping-row button:disabled{opacity:0.5;}
+.shipping-msg{font-size:11.5px;margin:-2px 0 6px;color:#b3261e;}
+.shipping-option{display:flex;justify-content:space-between;align-items:center;gap:8px;border:1.5px solid #e8dcc8;border-radius:8px;padding:8px 10px;margin-bottom:6px;cursor:pointer;font-size:12.5px;}
+.shipping-option.sel{border-color:#6b1f33;background:#fbeef0;}
+.shipping-option .so-name{font-weight:700;color:#4a1523;}
+.shipping-option .so-time{color:#8a7568;font-size:11px;}
+.shipping-option .so-price{font-weight:700;color:#6b1f33;}
 .gift-line{background:#fdf3e0;border-radius:8px;padding:8px 10px;font-size:12px;color:#a9720c;font-weight:700;margin:6px 0;}
 .myorders-link{position:absolute;top:16px;right:16px;font-size:12px;color:#f0e3d3;text-decoration:underline;cursor:pointer;background:none;border:none;}
 .myorders-box{background:#fff;border-radius:10px;padding:14px;font-size:13px;}
@@ -222,6 +233,10 @@ var refCouponCode = new URLSearchParams(window.location.search).get("cupom");
 var refCouponTried = false;
 var appliedCoupon = null;
 var couponMessage = "";
+var selectedShipping = null;
+var shippingOptions = [];
+var shippingLoading = false;
+var shippingError = "";
 var FAV_KEY = "jjsolene_favoritos";
 function loadFavorites(){ try{ return JSON.parse(localStorage.getItem(FAV_KEY)||"[]"); }catch(e){ return []; } }
 function saveFavorites(list){ try{ localStorage.setItem(FAV_KEY, JSON.stringify(list)); }catch(e){} }
@@ -794,12 +809,14 @@ function addToCart(p, size){
     cart.push({id:p.id, name:p.name, price:p.sale_price, size:size, qty:1,
       discountType:p.discount_type||"none", discountValue:p.discount_value||0, discountMinQty:p.discount_min_qty||1});
   }
+  selectedShipping = null; shippingOptions = []; shippingError = "";
   renderCart();
   openCart();
 }
 function changeQty(idx, delta){
   cart[idx].qty += delta;
   if(cart[idx].qty<=0) cart.splice(idx,1);
+  selectedShipping = null; shippingOptions = []; shippingError = "";
   renderCart();
 }
 function buildCartUI(){
@@ -926,6 +943,37 @@ async function applyCoupon(){
   }
   renderCart();
 }
+async function calculateShipping(){
+  var input = document.getElementById("shipping_cep");
+  var cep = (input.value||"").replace(/\D/g,"");
+  if(cep.length!==8){ shippingError="Digite um CEP válido (8 números)."; shippingOptions=[]; selectedShipping=null; renderCart(); return; }
+  var btn = document.getElementById("shipping_calc_btn");
+  shippingLoading = true; shippingError=""; shippingOptions=[]; selectedShipping=null;
+  renderCart();
+  try{
+    var itens = cart.filter(function(it){return !it.isGift;}).map(function(it){
+      var p = CATALOG.products.find(function(pp){return pp.id===it.id;}) || {};
+      return { weight_kg: p.weight_kg, length_cm: p.length_cm, width_cm: p.width_cm, height_cm: p.height_cm, qty: it.qty };
+    });
+    var r = await fetch(SB_URL + "/functions/v1/melhor-envio-callback", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cep_destino: cep, itens: itens })
+    });
+    var data = await r.json();
+    if(!r.ok || data.error){ throw new Error((data && data.error) || "Erro ao calcular frete."); }
+    var opts = (Array.isArray(data) ? data : []).filter(function(o){ return o.price && !o.error; });
+    if(opts.length===0){ shippingError = "Nenhuma transportadora atende esse CEP no momento."; }
+    shippingOptions = opts;
+  }catch(e){
+    shippingError = "Não foi possível calcular o frete agora. Tente novamente em instantes.";
+  }
+  shippingLoading = false;
+  renderCart();
+}
+function selectShippingOption(idx){
+  selectedShipping = shippingOptions[idx];
+  renderCart();
+}
 function renderCart(){
   lastCartChangeAt = Date.now(); cartNudgeShown = false; cartNudgeDismissed = false;
   syncGiftLine();
@@ -963,21 +1011,31 @@ function renderCart(){
   var subtotal = cartSubtotal();
   var discount = appliedCoupon ? appliedCoupon.discount_amount : 0;
   var total = Math.max(0, subtotal - discount);
+  var shippingCost = selectedShipping ? Number(selectedShipping.price) : 0;
+  var grandTotal = total + shippingCost;
   var sinalPercent = CATALOG.settings.sinal_percent || 100;
   var sinalValor = total * (sinalPercent/100);
   var couponInputValue = appliedCoupon ? appliedCoupon.code : (refCouponCode||"");
   var footHtml = "<div class=\"coupon-row\"><input id=\"coupon_input\" placeholder=\"Cupom de desconto\" value=\""+esc(couponInputValue)+"\"><button type=\"button\" onclick=\"applyCoupon()\">Aplicar</button></div>";
   if(couponMessage){ footHtml += "<div class=\"coupon-msg "+(appliedCoupon?"ok":"err")+"\">"+esc(couponMessage)+"</div>"; }
+  footHtml += "<div class=\"shipping-box\"><div class=\"shipping-row\"><input id=\"shipping_cep\" placeholder=\"Seu CEP (só números)\" maxlength=\"9\" value=\""+(document.getElementById("shipping_cep")?esc(document.getElementById("shipping_cep").value):"")+"\"><button type=\"button\" id=\"shipping_calc_btn\" onclick=\"calculateShipping()\" "+(shippingLoading?"disabled":"")+">"+(shippingLoading?"Calculando...":"Calcular frete")+"</button></div>";
+  if(shippingError){ footHtml += "<div class=\"shipping-msg\">"+esc(shippingError)+"</div>"; }
+  shippingOptions.forEach(function(opt, oi){
+    var isSel = selectedShipping && selectedShipping.id===opt.id;
+    footHtml += "<div class=\"shipping-option"+(isSel?" sel":"")+"\" onclick=\"selectShippingOption("+oi+")\"><div><div class=\"so-name\">"+esc(opt.company.name)+" - "+esc(opt.name)+"</div><div class=\"so-time\">Chega em até "+opt.delivery_time+" dia(s) útil(eis)</div></div><div class=\"so-price\">"+money(Number(opt.price))+"</div></div>";
+  });
+  footHtml += "</div>";
   footHtml += "<input id=\"chk_name\" placeholder=\"Seu nome\">";
   footHtml += "<input id=\"chk_phone\" placeholder=\"Seu telefone (com DDD)\">";
   footHtml += "<select id=\"chk_source\"><option value=\"\">Como você nos conheceu?</option><option value=\"Instagram\">Instagram</option><option value=\"Facebook\">Facebook</option><option value=\"TikTok\">TikTok</option><option value=\"Google\">Google</option><option value=\"Indicação de amiga(o)\">Indicação de amiga(o)</option><option value=\"WhatsApp\">WhatsApp</option><option value=\"Já sou cliente\">Já sou cliente</option><option value=\"Outro\">Outro</option></select>";
   footHtml += "<div class=\"line\"><span>Subtotal</span><span>"+money(subtotal)+"</span></div>";
   if(discount>0){ footHtml += "<div class=\"line\"><span>Desconto</span><span>-"+money(discount)+"</span></div>"; }
-  footHtml += "<div class=\"line total\"><span>Total</span><strong>"+money(total)+"</strong></div>";
+  if(selectedShipping){ footHtml += "<div class=\"line\"><span>Frete</span><span>"+money(shippingCost)+"</span></div>"; }
+  footHtml += "<div class=\"line total\"><span>Total"+(selectedShipping?" (com frete)":"")+"</span><strong>"+money(grandTotal)+"</strong></div>";
   if(sinalPercent < 100){
-    footHtml += "<div class=\"line total\"><span>Sinal ("+sinalPercent+"%)</span><span>"+money(sinalValor)+"</span></div>";
+    footHtml += "<div class=\"line total\"><span>Sinal ("+sinalPercent+"% dos produtos)</span><span>"+money(sinalValor)+"</span></div>";
   }
-  footHtml += "<button class=\"checkout-btn\" id=\"checkoutBtn\" onclick=\"checkout()\">Finalizar pedido (Pix / combinar)</button>";
+  footHtml += "<button class=\"checkout-btn\" id=\"checkoutBtn\" onclick=\"checkout()\""+(selectedShipping?"":" disabled")+">"+(selectedShipping?"Finalizar pedido (Pix / combinar)":"Calcule o frete para continuar")+"</button>";
   if(CATALOG.settings.infinitepay_handle){
     var maxInst = Math.max(1, Math.min(12, Number(CATALOG.settings.installments_max)||3));
     var freeMaxChk = Math.max(0, Math.min(maxInst, Number(CATALOG.settings.installments_free_max)||0));
@@ -987,7 +1045,7 @@ function renderCart(){
       instOptionsHtml += "<option value=\""+ni+"\">"+ni+"x de "+money(chargeN/ni)+(ni<=freeMaxChk?" sem juros":" com juros")+"</option>";
     }
     footHtml += "<div class=\"field\" style=\"margin:8px 0;\"><label style=\"font-size:12px;color:#8a7568;display:block;margin-bottom:4px;\">Parcelamento no cartão</label><select id=\"chk_installments\" style=\"width:100%;\">"+instOptionsHtml+"</select></div>";
-    footHtml += "<button class=\"checkout-btn card\" id=\"checkoutCardBtn\" onclick=\"checkoutCard()\">Pagar com cartão</button>";
+    footHtml += "<button class=\"checkout-btn card\" id=\"checkoutCardBtn\" onclick=\"checkoutCard()\""+(selectedShipping?"":" disabled")+">Pagar com cartão</button>";
     footHtml += "<div class=\"checkout-note\">Pix ou cartão em até "+maxInst+"x, via InfinitePay</div>";
   }
   if(CATALOG.settings.pix_key){
@@ -998,6 +1056,7 @@ function renderCart(){
 }
 async function checkout(){
   if(cart.length===0) return;
+  if(!selectedShipping){ alert("Calcule o frete antes de continuar."); return; }
   var name = (document.getElementById("chk_name").value||"").trim();
   var phone = (document.getElementById("chk_phone").value||"").trim();
   var source = (document.getElementById("chk_source").value||"").trim();
@@ -1017,14 +1076,17 @@ async function checkout(){
   }
   try{ await sb.rpc("set_order_referral_source", { p_order_id: orderId, p_source: source }); }catch(e){}
   try{ await sb.rpc("set_order_payment_method", { p_order_id: orderId, p_method: "pix" }); }catch(e){}
+  try{ await sb.rpc("set_order_shipping", { p_order_id: orderId, p_cost: Number(selectedShipping.price), p_carrier: selectedShipping.company.name+" - "+selectedShipping.name, p_cep: document.getElementById("shipping_cep").value.replace(/\D/g,"") }); }catch(e){}
   if(giftItem && giftItem.isManualGift){ try{ await sb.rpc("set_order_manual_gift", { p_order_id: orderId, p_note: giftItem.manualGiftName }); }catch(e){} }
   try{ await sb.rpc("upsert_customer", { p_name: name, p_phone: phone, p_email: null, p_birth_day: null, p_birth_month: null, p_cpf: null }); }catch(e){}
   var lines = cart.map(function(it){ return "- "+it.name+(it.size?(" (Tam "+it.size+")"):"")+" x"+it.qty+" — "+money(lineUnitPrice(it)*it.qty); });
   var total = (res.data && res.data.total!=null) ? res.data.total : cartSubtotal();
-  var msg = "Olá! Fiz um pedido no catálogo (" + name + "):%0A%0A" + encodeURIComponent(lines.join("\n")) + "%0A%0ATotal: " + encodeURIComponent(money(total));
+  var totalComFrete = total + Number(selectedShipping.price);
+  var msg = "Olá! Fiz um pedido no catálogo (" + name + "):%0A%0A" + encodeURIComponent(lines.join("\n")) + "%0A%0AFrete ("+encodeURIComponent(selectedShipping.company.name+" - "+selectedShipping.name)+"): " + encodeURIComponent(money(Number(selectedShipping.price))) + "%0ATotal: " + encodeURIComponent(money(totalComFrete));
   var wpp = (CATALOG.settings.whatsapp||"").replace(/\D/g,"");
   cart = [];
   appliedCoupon = null; couponMessage = "";
+  selectedShipping = null; shippingOptions = []; shippingError = "";
   renderCart();
   closeCart();
   if(wpp){ window.open("https://wa.me/"+wpp+"?text="+msg, "_blank"); }
@@ -1032,6 +1094,7 @@ async function checkout(){
 }
 async function checkoutCard(){
   if(cart.length===0) return;
+  if(!selectedShipping){ alert("Calcule o frete antes de continuar."); return; }
   var name = (document.getElementById("chk_name").value||"").trim();
   var phone = (document.getElementById("chk_phone").value||"").trim();
   var source = (document.getElementById("chk_source").value||"").trim();
@@ -1056,19 +1119,22 @@ async function checkoutCard(){
   try{ await sb.rpc("set_order_referral_source", { p_order_id: orderId, p_source: source }); }catch(e){}
   try{ await sb.rpc("set_order_payment_method", { p_order_id: orderId, p_method: "cartao_pendente" }); }catch(e){}
   try{ await sb.rpc("set_order_installments", { p_order_id: orderId, p_installments: installments }); }catch(e){}
+  try{ await sb.rpc("set_order_shipping", { p_order_id: orderId, p_cost: Number(selectedShipping.price), p_carrier: selectedShipping.company.name+" - "+selectedShipping.name, p_cep: document.getElementById("shipping_cep").value.replace(/\D/g,"") }); }catch(e){}
   if(giftItem && giftItem.isManualGift){ try{ await sb.rpc("set_order_manual_gift", { p_order_id: orderId, p_note: giftItem.manualGiftName }); }catch(e){} }
   try{ await sb.rpc("upsert_customer", { p_name: name, p_phone: phone, p_email: null, p_birth_day: null, p_birth_month: null, p_cpf: null }); }catch(e){}
   var baseTotal = (res.data && res.data.total!=null) ? res.data.total : cartSubtotal();
-  var chargeTotal = installmentChargeTotal(baseTotal, installments, CATALOG.settings);
+  var shippingCost = Number(selectedShipping.price);
+  var chargeTotal = installmentChargeTotal(baseTotal + shippingCost, installments, CATALOG.settings);
   var itemCount = cart.filter(function(it){return !it.isGift;}).reduce(function(s,it){return s+it.qty;},0);
   var hasDiscount = (res.data && res.data.discount_amount > 0) || cart.some(function(it){ return !it.isGift && lineUnitPrice(it) < it.price; });
-  var marked = Math.round(chargeTotal*100) !== Math.round(baseTotal*100);
+  var marked = Math.round(chargeTotal*100) !== Math.round((baseTotal+shippingCost)*100);
   var ipItems;
   if(hasDiscount || marked){
     var instDesc = installments>1 ? (" em "+installments+"x") : "";
-    ipItems = [{ quantity: 1, price: Math.round(chargeTotal*100), description: "Pedido "+name+" ("+itemCount+" peça(s))"+instDesc }];
+    ipItems = [{ quantity: 1, price: Math.round(chargeTotal*100), description: "Pedido "+name+" ("+itemCount+" peça(s) + frete)"+instDesc }];
   } else {
     ipItems = cart.filter(function(it){return !it.isGift;}).map(function(it){ return { quantity: it.qty, price: Math.round(it.price*100), description: it.name + " (Tam " + it.size + ")" }; });
+    ipItems.push({ quantity: 1, price: Math.round(shippingCost*100), description: "Frete - "+selectedShipping.company.name+" "+selectedShipping.name });
   }
   var redirectUrl = window.location.origin + window.location.pathname;
   try{
