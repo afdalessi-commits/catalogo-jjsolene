@@ -1,0 +1,10 @@
+[functions.meta-webhook]
+# A Meta chama esta function direto (sem JWT do Supabase) — a autenticação real é a
+# assinatura HMAC validada dentro do código (verifyMetaSignature em _shared/meta.ts).
+verify_jwt = false
+
+[functions.meta-send]
+# Exige um JWT válido de usuário logado no sistema — o código também revalida por conta
+# própria (supabase.auth.getUser), mas deixamos o gateway do Supabase barrar de graça
+# qualquer chamada sem token nenhum.
+verify_jwt = true

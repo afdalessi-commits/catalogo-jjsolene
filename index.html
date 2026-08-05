@@ -234,6 +234,7 @@
     <div class="nav-item active" data-tab="dashboard"><span class="nav-icon">🏠</span> Dashboard</div>
     <div class="nav-item" data-tab="agenda"><span class="nav-icon">🗓️</span> Agenda</div>
     <div class="nav-item" data-tab="pedidos"><span class="nav-icon">🔔</span> Pedidos <span class="nav-badge hidden" id="pedidosBadge">0</span></div>
+    <div class="nav-item" data-tab="atendimento"><span class="nav-icon">💬</span> Atendimento <span class="nav-badge hidden" id="atendimentoBadge">0</span></div>
     <div class="nav-item" data-tab="estoque"><span class="nav-icon">👗</span> Estoque</div>
     <div class="nav-item" data-tab="inventario"><span class="nav-icon">📋</span> Inventário</div>
     <div class="nav-item" data-tab="compras"><span class="nav-icon">📦</span> Compras</div>
@@ -264,6 +265,7 @@
     <div id="tab-dashboard" class="tab-panel"></div>
     <div id="tab-agenda" class="tab-panel hidden"></div>
     <div id="tab-pedidos" class="tab-panel hidden"></div>
+    <div id="tab-atendimento" class="tab-panel hidden"></div>
     <div id="tab-estoque" class="tab-panel hidden"></div>
     <div id="tab-inventario" class="tab-panel hidden"></div>
     <div id="tab-compras" class="tab-panel hidden"></div>
@@ -303,9 +305,11 @@ const DEFAULT_SB_URL = 'https://pcvcpylcpuvprpkydbxf.supabase.co';
 const DEFAULT_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBjdmNweWxjcHV2cHJwa3lkYnhmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxNzE1NzUsImV4cCI6MjEwMDc0NzU3NX0.-Lsvw55ao1TRVv-uybojs6R_Uo7rlXcRseatiECa0fM';
 const CATALOG_PUBLIC_URL = 'https://afdalessi-commits.github.io/catalogo-jjsolene/catalogo/';
 let SUPA = null;
+let CURRENT_SB_URL = null;
 let currentUser = null;
 let currentProfile = null;
 let categoriesCache = null;
+let configAutoReplyKeysCache = [];
 
 /* ---------- helpers gerais ---------- */
 /* ---------- máscaras de campo (telefone, CEP, CPF/CNPJ) ---------- */
@@ -480,6 +484,7 @@ function resetConnection(){
 function initClient(url, key){
   try{
     SUPA = window.supabase.createClient(url, key);
+    CURRENT_SB_URL = url;
   }catch(e){
     renderConnectScreen('Não foi possível conectar: '+e.message);
     return;
@@ -527,7 +532,7 @@ async function doLogout(){
   document.getElementById('appRoot').classList.add('hidden');
   renderLoginScreen();
 }
-const COMERCIAL_ALLOWED_TABS = ['agenda','pedidos','estoque','vendas','bagdelivery','clientes'];
+const COMERCIAL_ALLOWED_TABS = ['agenda','pedidos','atendimento','estoque','vendas','bagdelivery','clientes'];
 async function enterApp(){
   const profileR = await SUPA.from('profiles').select('*').eq('id', currentUser.id).maybeSingle();
   if(profileR.error || !profileR.data){
@@ -547,6 +552,8 @@ async function enterApp(){
   applyRolePermissions();
   showTab(currentProfile.role==='comercial' ? 'pedidos' : 'dashboard');
   refreshPedidosBadge();
+  refreshAtendimentoBadge();
+  setInterval(refreshAtendimentoBadge, 20000);
   applyBranding();
   autoExpireStaleOrders();
 }
@@ -607,7 +614,7 @@ async function refreshPedidosBadge(){
    NAVEGAÇÃO
    ============================================================ */
 const TAB_TITLES = {
-  dashboard:'Dashboard', agenda:'Agenda', pedidos:'Pedidos', estoque:'Estoque', inventario:'Inventário', compras:'Compras', fornecedores:'Fornecedores', vendas:'Vendas', bagdelivery:'Bag Delivery',
+  dashboard:'Dashboard', agenda:'Agenda', pedidos:'Pedidos', atendimento:'Atendimento', estoque:'Estoque', inventario:'Inventário', compras:'Compras', fornecedores:'Fornecedores', vendas:'Vendas', bagdelivery:'Bag Delivery',
   vendedores:'Vendedor(es)', clientes:'Clientes', marketing:'Marketing', financeiro:'Financeiro', relatorios:'Relatórios', nf:'Notas Fiscais', catalogo:'Catálogo', config:'Configurações'
 };
 async function showTab(name){
@@ -625,6 +632,7 @@ async function renderTab(name){
   if(name==='dashboard') await renderDashboard();
   if(name==='agenda') await renderAgenda();
   if(name==='pedidos') await renderPedidos();
+  if(name==='atendimento') await renderAtendimento();
   if(name==='estoque') await renderEstoque();
   if(name==='inventario') await renderInventario();
   if(name==='compras') await renderCompras();
@@ -1273,9 +1281,23 @@ async function confirmOrderAction(id){
   if(order && order.installments){
     try{ await recordInfinitePayAbsorbedFee(order, saleId); }catch(e){ console.error('Erro ao lançar taxa de parcelamento:', e); }
   }
+  if(order && order.phone){
+    try{ await sendOrderConfirmedWhatsApp(order); }catch(e){ console.error('Erro ao enviar confirmação por WhatsApp:', e); }
+  }
   toast('Pedido confirmado. Venda registrada.');
   await renderPedidos();
   refreshPedidosBadge();
+}
+async function sendOrderConfirmedWhatsApp(order){
+  const session = (await SUPA.auth.getSession()).data.session;
+  const r = await fetch(CURRENT_SB_URL + '/functions/v1/meta-send', {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json', 'Authorization':'Bearer '+session.access_token },
+    body: JSON.stringify({ phone: order.phone, template_key: 'order_confirmed',
+      params: { customer_name: order.customer||'', total: fmtMoney(order.total) } })
+  });
+  const data = await r.json();
+  if(!r.ok || !data.ok) console.error('meta-send falhou:', data.error);
 }
 async function recordInfinitePayAbsorbedFee(order, saleId){
   const settings = await getSettings();
@@ -1298,6 +1320,143 @@ async function cancelOrderAction(id){
   toast('Pedido cancelado.');
   await renderPedidos();
   refreshPedidosBadge();
+}
+
+/* ============================================================
+   ATENDIMENTO (WhatsApp / Instagram / Messenger)
+   ============================================================ */
+let atendimentoCache = [];
+let atendimentoCurrentId = null;
+async function refreshAtendimentoBadge(){
+  try{
+    const rows = await q(SUPA.from('conversations').select('id').eq('status','unclaimed'));
+    const badge = document.getElementById('atendimentoBadge');
+    if(rows.length > 0){ badge.textContent = rows.length; badge.classList.remove('hidden'); }
+    else { badge.classList.add('hidden'); }
+  }catch(e){ /* silencioso — tabela pode ainda não existir até a Fase 1 ser aplicada */ }
+}
+function channelIcon(channel){
+  if(channel==='whatsapp') return '💬';
+  if(channel==='instagram') return '📷';
+  return '👤';
+}
+function conversationRowHtml(c, canClaim){
+  const label = c.customer_name || (c.customer_phone ? maskPhoneBR(c.customer_phone) : 'Contato');
+  const unread = c.unread_count>0 ? ' <span class="tag bad">'+c.unread_count+'</span>' : '';
+  const time = c.last_message_at ? elapsedLabel(Date.now()-new Date(c.last_message_at).getTime())+' atrás' : '';
+  let html = '<div class="card" style="margin-bottom:8px;padding:10px 12px;cursor:pointer;" onclick="openConversationThread(\''+c.id+'\')">';
+  html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">';
+  html += '<div><strong>'+channelIcon(c.channel)+' '+escapeHtml(label)+'</strong>'+unread+'</div>';
+  html += '<div style="color:var(--muted);font-size:11.5px;white-space:nowrap;">'+time+'</div>';
+  html += '</div>';
+  html += '<div style="color:var(--muted);font-size:12.5px;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+escapeHtml(c.last_message_preview||'')+'</div>';
+  if(canClaim){
+    html += '<div class="row-actions" style="margin-top:6px;"><button class="btn small" onclick="event.stopPropagation();claimConversation(\''+c.id+'\')">Assumir</button></div>';
+  }
+  html += '</div>';
+  return html;
+}
+async function renderAtendimento(){
+  const el = document.getElementById('tab-atendimento');
+  el.innerHTML = '<div class="empty">Carregando...</div>';
+  let conversations;
+  try{
+    conversations = await q(SUPA.from('conversations').select('*').order('last_message_at',{ascending:false}).limit(200));
+  }catch(e){
+    el.innerHTML = '<div class="empty">Atendimento ainda não configurado — fale com quem administra o sistema.</div>';
+    return;
+  }
+  atendimentoCache = conversations;
+  const isAdmin = currentProfile && currentProfile.role==='admin';
+  const naoAtribuidas = conversations.filter(c=>c.status==='unclaimed');
+  const minhas = conversations.filter(c=>c.assigned_to===currentUser.id);
+  const deOutros = isAdmin ? conversations.filter(c=>c.status==='claimed' && c.assigned_to!==currentUser.id) : [];
+
+  let html = '<div class="page-desc">Mensagens recebidas no WhatsApp/Instagram/Messenger da loja. Quem assumir uma conversa não atribuída passa a ser quem atende aquele cliente daqui pra frente.</div>';
+  html += '<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">';
+  html += '<div style="flex:1;min-width:280px;">';
+  html += '<div class="section-title">Não atribuídas ('+naoAtribuidas.length+')</div>';
+  html += naoAtribuidas.length ? naoAtribuidas.map(c=>conversationRowHtml(c,true)).join('') : '<div class="empty">Nenhuma conversa nova.</div>';
+  html += '<div class="section-title">Minhas conversas ('+minhas.length+')</div>';
+  html += minhas.length ? minhas.map(c=>conversationRowHtml(c,false)).join('') : '<div class="empty">Nenhuma conversa sua ainda.</div>';
+  if(isAdmin){
+    html += '<div class="section-title">De outras pessoas ('+deOutros.length+')</div>';
+    html += deOutros.length ? deOutros.map(c=>conversationRowHtml(c,false)).join('') : '<div class="empty">Nenhuma.</div>';
+  }
+  html += '</div>';
+  html += '<div class="card" id="atendimentoThread" style="flex:1.3;min-width:320px;position:sticky;top:12px;"><div class="empty">Selecione uma conversa.</div></div>';
+  html += '</div>';
+  el.innerHTML = html;
+}
+async function claimConversation(id){
+  const rows = await q(SUPA.from('conversations')
+    .update({assigned_to: currentUser.id, status:'claimed', claimed_at: new Date().toISOString()})
+    .eq('id', id).eq('status','unclaimed').select());
+  if(!rows.length){
+    toast('Essa conversa já foi assumida por outra pessoa.');
+    await renderAtendimento();
+    return;
+  }
+  toast('Conversa assumida.');
+  await renderAtendimento();
+  openConversationThread(id);
+}
+function messageBubbleHtml(m){
+  const mine = m.direction==='outbound';
+  const align = mine ? 'flex-end' : 'flex-start';
+  const bg = mine ? 'var(--cream)' : '#fff';
+  const border = mine ? 'none' : '1px solid var(--border)';
+  return '<div style="align-self:'+align+';max-width:78%;background:'+bg+';border:'+border+';border-radius:10px;padding:7px 11px;font-size:13px;line-height:1.45;">'+escapeHtml(m.body)+'</div>';
+}
+async function openConversationThread(id){
+  atendimentoCurrentId = id;
+  const thread = document.getElementById('atendimentoThread');
+  thread.innerHTML = '<div class="empty">Carregando...</div>';
+  let conv = (atendimentoCache||[]).find(c=>c.id===id);
+  if(!conv){ conv = (await q(SUPA.from('conversations').select('*').eq('id', id)))[0]; }
+  if(!conv){ thread.innerHTML = '<div class="empty">Conversa não encontrada.</div>'; return; }
+  const messages = await q(SUPA.from('messages').select('*').eq('conversation_id', id).order('created_at'));
+  const label = conv.customer_name || (conv.customer_phone ? maskPhoneBR(conv.customer_phone) : 'Contato');
+
+  let html = '<div style="border-bottom:1px solid var(--border);padding-bottom:8px;margin-bottom:10px;"><strong>'+channelIcon(conv.channel)+' '+escapeHtml(label)+'</strong></div>';
+  html += '<div id="atendimentoMessages" style="max-height:360px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding-right:4px;">';
+  html += messages.length ? messages.map(m=>messageBubbleHtml(m)).join('') : '<div class="empty">Nenhuma mensagem ainda.</div>';
+  html += '</div>';
+  html += '<div class="field" style="margin-top:10px;"><textarea id="atendimentoReplyBox" rows="2" placeholder="Digite sua resposta..."></textarea></div>';
+  html += '<div class="row-actions"><button class="btn" id="atendimentoSendBtn" onclick="sendReplyMessage()">Enviar</button></div>';
+  thread.innerHTML = html;
+
+  if(conv.unread_count>0){
+    await q(SUPA.from('conversations').update({unread_count:0}).eq('id', id));
+    conv.unread_count = 0;
+    refreshAtendimentoBadge();
+  }
+}
+async function sendReplyMessage(){
+  const id = atendimentoCurrentId;
+  if(!id) return;
+  const box = document.getElementById('atendimentoReplyBox');
+  const body = (box.value||'').trim();
+  if(!body) return;
+  const btn = document.getElementById('atendimentoSendBtn');
+  btn.disabled = true;
+  try{
+    const session = (await SUPA.auth.getSession()).data.session;
+    const r = await fetch(CURRENT_SB_URL + '/functions/v1/meta-send', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', 'Authorization':'Bearer '+session.access_token },
+      body: JSON.stringify({ conversation_id: id, body: body })
+    });
+    const data = await r.json();
+    if(!r.ok || !data.ok){ toast('Erro ao enviar: '+(data.error||'falha desconhecida')); return; }
+    box.value = '';
+    await openConversationThread(id);
+  }catch(e){
+    toast('Erro ao enviar mensagem.');
+    console.error(e);
+  }finally{
+    btn.disabled = false;
+  }
 }
 
 /* ============================================================
@@ -5695,6 +5854,9 @@ async function renderConfig(){
   const el = document.getElementById('tab-config');
   el.innerHTML = '<div class="empty">Carregando...</div>';
   const [s, cats, teamProfiles, sellersForEq, cashbackRules] = await Promise.all([getSettings(), getCategories(true), q(SUPA.from('profiles').select('*, sellers(name)').order('created_at')), getSellersLite(true), q(SUPA.from('cashback_rules').select('*').order('type'))]);
+  let autoReplyTemplates = [];
+  try{ autoReplyTemplates = await q(SUPA.from('message_templates').select('*').order('key')); }catch(e){ /* tabela do Atendimento ainda não foi criada */ }
+  configAutoReplyKeysCache = autoReplyTemplates.map(t=>t.key);
   let html = '<form autocomplete="off" onsubmit="return false;">';
   html += '<div class="page-desc">Dados da loja usados no catálogo público e nos recibos.</div>';
   html += '<div class="form-block"><h4>Loja</h4>';
@@ -5732,6 +5894,15 @@ async function renderConfig(){
   html += '<div class="field"><label>WhatsApp da 2ª atendente</label><input id="cf_at2_phone" value="'+escapeHtml(maskPhoneBR(s.attendant2_phone||''))+'" placeholder="Ex: (11) 98719-0466" oninput="applyMask(this,maskPhoneBR)"></div>';
   html += '</div>';
   html += '</div>';
+
+  if(autoReplyTemplates.length){
+    html += '<div class="form-block"><h4>Atendimento automático (WhatsApp)</h4>';
+    html += '<div class="note">Textos enviados automaticamente pelo sistema (aba Atendimento). Use <code>{{customer_name}}</code> e <code>{{total}}</code> onde fizer sentido — eles são substituídos pelo nome e valor de cada pedido. A mensagem de "Pedido confirmado" também precisa estar aprovada como modelo na Meta com o mesmo texto (peça ajuda se for mudar).</div>';
+    autoReplyTemplates.forEach(function(t){
+      html += '<div class="field" style="margin-bottom:8px;"><label>'+escapeHtml(t.label)+'</label><textarea id="cf_tpl_'+escapeHtml(t.key)+'" rows="2">'+escapeHtml(t.body)+'</textarea></div>';
+    });
+    html += '</div>';
+  }
 
   html += '<div class="form-block"><h4>Visual do catálogo</h4>';
   html += '<div class="form-row">';
@@ -5892,8 +6063,18 @@ async function saveConfig(){
     auto_cancel_card_hours: Math.max(0.25, Number(document.getElementById('cf_autocancel_card').value)||1),
     updated_at: new Date().toISOString()
   }).eq('id',1));
+  await saveAutoReplyTemplates();
   toast('Configurações salvas.');
   await renderConfig();
+}
+async function saveAutoReplyTemplates(){
+  for(const key of configAutoReplyKeysCache){
+    const box = document.getElementById('cf_tpl_'+key);
+    if(!box) continue;
+    await q(SUPA.from('message_templates').update({
+      body: box.value.trim(), updated_at: new Date().toISOString()
+    }).eq('key', key));
+  }
 }
 async function uploadBrandImage(input, field){
   const file = input.files[0];
