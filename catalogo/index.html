@@ -223,6 +223,24 @@ body{padding-bottom:76px;}
 var SB_URL = "https://pcvcpylcpuvprpkydbxf.supabase.co";
 var SB_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBjdmNweWxjcHV2cHJwa3lkYnhmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxNzE1NzUsImV4cCI6MjEwMDc0NzU3NX0.-Lsvw55ao1TRVv-uybojs6R_Uo7rlXcRseatiECa0fM";
 var sb = window.supabase.createClient(SB_URL, SB_ANON);
+function maskPhoneBR(value){
+  var d = (value||"").replace(/\D/g,"").slice(0,11);
+  if(d.length===0) return "";
+  if(d.length<=2) return "("+d;
+  if(d.length<=6) return "("+d.slice(0,2)+") "+d.slice(2);
+  if(d.length<=10) return "("+d.slice(0,2)+") "+d.slice(2,6)+"-"+d.slice(6);
+  return "("+d.slice(0,2)+") "+d.slice(2,7)+"-"+d.slice(7);
+}
+function maskCEP(value){
+  var d = (value||"").replace(/\D/g,"").slice(0,8);
+  return d.length<=5 ? d : d.slice(0,5)+"-"+d.slice(5);
+}
+function applyMask(inputEl, maskFn){
+  var wasAtEnd = inputEl.selectionStart === inputEl.value.length;
+  var masked = maskFn(inputEl.value);
+  inputEl.value = masked;
+  if(wasAtEnd){ try{ inputEl.setSelectionRange(masked.length, masked.length); }catch(e){} }
+}
 var CATALOG = { settings:null, categories:[], products:[], media:[], banners:[], giftRules:[], activeTab:"inicio", filterCategoryId:null, heroSlide:0 };
 var cart = [];
 var lastCartChangeAt = Date.now();
@@ -787,10 +805,10 @@ function buildCard(p){
   return card;
 }
 function openWaitlistForm(p){
-  var m = genericModal("<div class=\"myorders-box\"><strong>Avise-me quando chegar</strong><p style=\"color:#8a7568;\">"+esc(p.name)+"</p><input id=\"wl_name\" placeholder=\"Seu nome\"><input id=\"wl_phone\" placeholder=\"Seu telefone (com DDD)\"><button class=\"checkout-btn\" id=\"wl_btn\" style=\"margin-top:0;\">Quero ser avisado(a)</button></div>");
+  var m = genericModal("<div class=\"myorders-box\"><strong>Avise-me quando chegar</strong><p style=\"color:#8a7568;\">"+esc(p.name)+"</p><input id=\"wl_name\" placeholder=\"Seu nome\"><input id=\"wl_phone\" placeholder=\"Seu telefone (com DDD)\" oninput=\"applyMask(this,maskPhoneBR)\"><button class=\"checkout-btn\" id=\"wl_btn\" style=\"margin-top:0;\">Quero ser avisado(a)</button></div>");
   document.getElementById("wl_btn").onclick = async function(){
     var name = (document.getElementById("wl_name").value||"").trim();
-    var phone = (document.getElementById("wl_phone").value||"").trim();
+    var phone = (document.getElementById("wl_phone").value||"").replace(/\D/g,"");
     if(!name || !phone){ alert("Preencha nome e telefone."); return; }
     await sb.from("waitlist").insert([{ product_id: p.id, customer_name: name, phone: phone }]);
     m.close();
@@ -881,9 +899,9 @@ function genericModal(innerHtml){
   return { overlay: ov, box: box, close: closeModalBox };
 }
 function openMyOrders(){
-  var m = genericModal("<div class=\"myorders-box\"><strong>Meus pedidos</strong><p style=\"color:#8a7568;\">Digite o telefone usado na compra para ver seu histórico e saldo de cashback.</p><input id=\"mo_phone\" placeholder=\"Seu telefone (com DDD)\"><button class=\"checkout-btn\" id=\"mo_btn\" style=\"margin-top:0;\">Consultar</button><div id=\"mo_result\"></div></div>");
+  var m = genericModal("<div class=\"myorders-box\"><strong>Meus pedidos</strong><p style=\"color:#8a7568;\">Digite o telefone usado na compra para ver seu histórico e saldo de cashback.</p><input id=\"mo_phone\" placeholder=\"Seu telefone (com DDD)\" oninput=\"applyMask(this,maskPhoneBR)\"><button class=\"checkout-btn\" id=\"mo_btn\" style=\"margin-top:0;\">Consultar</button><div id=\"mo_result\"></div></div>");
   document.getElementById("mo_btn").onclick = async function(){
-    var phone = (document.getElementById("mo_phone").value||"").trim();
+    var phone = (document.getElementById("mo_phone").value||"").replace(/\D/g,"");
     if(!phone) return;
     var res = await sb.rpc("get_my_orders", { p_phone: phone });
     var box = document.getElementById("mo_result");
@@ -1018,7 +1036,7 @@ function renderCart(){
   var couponInputValue = appliedCoupon ? appliedCoupon.code : (refCouponCode||"");
   var footHtml = "<div class=\"coupon-row\"><input id=\"coupon_input\" placeholder=\"Cupom de desconto\" value=\""+esc(couponInputValue)+"\"><button type=\"button\" onclick=\"applyCoupon()\">Aplicar</button></div>";
   if(couponMessage){ footHtml += "<div class=\"coupon-msg "+(appliedCoupon?"ok":"err")+"\">"+esc(couponMessage)+"</div>"; }
-  footHtml += "<div class=\"shipping-box\"><div class=\"shipping-row\"><input id=\"shipping_cep\" placeholder=\"Seu CEP (só números)\" maxlength=\"9\" value=\""+(document.getElementById("shipping_cep")?esc(document.getElementById("shipping_cep").value):"")+"\"><button type=\"button\" id=\"shipping_calc_btn\" onclick=\"calculateShipping()\" "+(shippingLoading?"disabled":"")+">"+(shippingLoading?"Calculando...":"Calcular frete")+"</button></div>";
+  footHtml += "<div class=\"shipping-box\"><div class=\"shipping-row\"><input id=\"shipping_cep\" placeholder=\"Seu CEP (só números)\" maxlength=\"9\" oninput=\"applyMask(this,maskCEP)\" value=\""+(document.getElementById("shipping_cep")?esc(maskCEP(document.getElementById("shipping_cep").value)):"")+"\"><button type=\"button\" id=\"shipping_calc_btn\" onclick=\"calculateShipping()\" "+(shippingLoading?"disabled":"")+">"+(shippingLoading?"Calculando...":"Calcular frete")+"</button></div>";
   if(shippingError){ footHtml += "<div class=\"shipping-msg\">"+esc(shippingError)+"</div>"; }
   shippingOptions.forEach(function(opt, oi){
     var isSel = selectedShipping && selectedShipping.id===opt.id;
@@ -1026,7 +1044,7 @@ function renderCart(){
   });
   footHtml += "</div>";
   footHtml += "<input id=\"chk_name\" placeholder=\"Seu nome\">";
-  footHtml += "<input id=\"chk_phone\" placeholder=\"Seu telefone (com DDD)\">";
+  footHtml += "<input id=\"chk_phone\" placeholder=\"Seu telefone (com DDD)\" oninput=\"applyMask(this,maskPhoneBR)\">";
   footHtml += "<select id=\"chk_source\"><option value=\"\">Como você nos conheceu?</option><option value=\"Instagram\">Instagram</option><option value=\"Facebook\">Facebook</option><option value=\"TikTok\">TikTok</option><option value=\"Google\">Google</option><option value=\"Indicação de amiga(o)\">Indicação de amiga(o)</option><option value=\"WhatsApp\">WhatsApp</option><option value=\"Já sou cliente\">Já sou cliente</option><option value=\"Outro\">Outro</option></select>";
   footHtml += "<div class=\"line\"><span>Subtotal</span><span>"+money(subtotal)+"</span></div>";
   if(discount>0){ footHtml += "<div class=\"line\"><span>Desconto</span><span>-"+money(discount)+"</span></div>"; }
@@ -1058,7 +1076,7 @@ async function checkout(){
   if(cart.length===0) return;
   if(!selectedShipping){ alert("Calcule o frete antes de continuar."); return; }
   var name = (document.getElementById("chk_name").value||"").trim();
-  var phone = (document.getElementById("chk_phone").value||"").trim();
+  var phone = (document.getElementById("chk_phone").value||"").replace(/\D/g,"");
   var source = (document.getElementById("chk_source").value||"").trim();
   if(!name || !phone){ alert("Preencha seu nome e telefone para continuar."); return; }
   if(!source){ alert("Conta pra gente como você conheceu a JJ Solene antes de continuar."); return; }
@@ -1096,7 +1114,7 @@ async function checkoutCard(){
   if(cart.length===0) return;
   if(!selectedShipping){ alert("Calcule o frete antes de continuar."); return; }
   var name = (document.getElementById("chk_name").value||"").trim();
-  var phone = (document.getElementById("chk_phone").value||"").trim();
+  var phone = (document.getElementById("chk_phone").value||"").replace(/\D/g,"");
   var source = (document.getElementById("chk_source").value||"").trim();
   if(!name || !phone){ alert("Preencha seu nome e telefone para continuar."); return; }
   if(!source){ alert("Conta pra gente como você conheceu a JJ Solene antes de continuar."); return; }

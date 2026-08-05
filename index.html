@@ -308,6 +308,44 @@ let currentProfile = null;
 let categoriesCache = null;
 
 /* ---------- helpers gerais ---------- */
+/* ---------- máscaras de campo (telefone, CEP, CPF/CNPJ) ---------- */
+function maskPhoneBR(value){
+  const d = (value||'').replace(/\D/g,'').slice(0,11);
+  if(d.length===0) return '';
+  if(d.length<=2) return '('+d;
+  if(d.length<=6) return '('+d.slice(0,2)+') '+d.slice(2);
+  if(d.length<=10) return '('+d.slice(0,2)+') '+d.slice(2,6)+'-'+d.slice(6);
+  return '('+d.slice(0,2)+') '+d.slice(2,7)+'-'+d.slice(7);
+}
+function maskCEP(value){
+  const d = (value||'').replace(/\D/g,'').slice(0,8);
+  return d.length<=5 ? d : d.slice(0,5)+'-'+d.slice(5);
+}
+function maskCPF(value){
+  const d = (value||'').replace(/\D/g,'').slice(0,11);
+  if(d.length<=3) return d;
+  if(d.length<=6) return d.slice(0,3)+'.'+d.slice(3);
+  if(d.length<=9) return d.slice(0,3)+'.'+d.slice(3,6)+'.'+d.slice(6);
+  return d.slice(0,3)+'.'+d.slice(3,6)+'.'+d.slice(6,9)+'-'+d.slice(9);
+}
+function maskCNPJ(value){
+  const d = (value||'').replace(/\D/g,'').slice(0,14);
+  if(d.length<=2) return d;
+  if(d.length<=5) return d.slice(0,2)+'.'+d.slice(2);
+  if(d.length<=8) return d.slice(0,2)+'.'+d.slice(2,5)+'.'+d.slice(5);
+  if(d.length<=12) return d.slice(0,2)+'.'+d.slice(2,5)+'.'+d.slice(5,8)+'/'+d.slice(8);
+  return d.slice(0,2)+'.'+d.slice(2,5)+'.'+d.slice(5,8)+'/'+d.slice(8,12)+'-'+d.slice(12);
+}
+function maskCpfCnpj(value){
+  const d = (value||'').replace(/\D/g,'');
+  return d.length>11 ? maskCNPJ(value) : maskCPF(value);
+}
+function applyMask(inputEl, maskFn){
+  const wasAtEnd = inputEl.selectionStart === inputEl.value.length;
+  const masked = maskFn(inputEl.value);
+  inputEl.value = masked;
+  if(wasAtEnd){ try{ inputEl.setSelectionRange(masked.length, masked.length); }catch(e){} }
+}
 function uidLocal(prefix){ return (prefix||'id')+'_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 function todayISO(){ const d = new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function fmtDate(iso){ if(!iso) return '—'; const d = new Date(iso); if(isNaN(d)) return iso; return d.toLocaleDateString('pt-BR'); }
@@ -819,7 +857,7 @@ function renderDashboardHTML(){
   } else {
     html += '<div class="card"><table><tr><th>Dia</th><th>Nome</th><th>Telefone</th></tr>';
     birthdayCustomers.forEach(c=>{
-      html += '<tr><td>'+String(c.birth_day).padStart(2,'0')+'</td><td>'+escapeHtml(c.name)+'</td><td>'+escapeHtml(c.phone||'—')+'</td></tr>';
+      html += '<tr><td>'+String(c.birth_day).padStart(2,'0')+'</td><td>'+escapeHtml(c.name)+'</td><td>'+escapeHtml(c.phone?maskPhoneBR(c.phone):'—')+'</td></tr>';
     });
     html += '</table></div>';
   }
@@ -2481,7 +2519,7 @@ function openFornecedorForm(id){
   html += '<div class="field" style="margin-bottom:8px;"><label>Nome</label><input id="fo_name" value="'+escapeHtml(f.name)+'" placeholder="Nome do fornecedor"></div>';
   html += '<div class="form-row">';
   html += '<div class="field"><label>Contato (opcional)</label><input id="fo_contact" value="'+escapeHtml(f.contact||'')+'" placeholder="Ex: nome da pessoa de contato"></div>';
-  html += '<div class="field"><label>Telefone (opcional)</label><input id="fo_phone" value="'+escapeHtml(f.phone||'')+'" placeholder="Ex: (11) 90000-0000"></div>';
+  html += '<div class="field"><label>Telefone (opcional)</label><input id="fo_phone" value="'+escapeHtml(maskPhoneBR(f.phone||''))+'" placeholder="Ex: (11) 90000-0000" oninput="applyMask(this,maskPhoneBR)"></div>';
   html += '</div>';
   html += '<div class="field" style="margin-bottom:8px;"><label>Endereço (opcional)</label><input id="fo_address" value="'+escapeHtml(f.address||'')+'" placeholder="Endereço completo"></div>';
   html += '<div class="row-actions"><button class="btn" id="fo_save_btn" onclick="saveFornecedor('+(id?"'"+id+"'":'null')+')">Salvar</button><button class="btn outline" onclick="closeModal()">Cancelar</button></div>';
@@ -2804,7 +2842,7 @@ function filterBagCustomerOptions(){
   const menu = document.getElementById('bg_customer_menu');
   const matches = (term ? bagCustomersCache.filter(function(c){ return (c.name||'').toLowerCase().indexOf(term)!==-1 || (c.phone||'').indexOf(term)!==-1; }) : bagCustomersCache).slice(0,8);
   menu.innerHTML = matches.length
-    ? matches.map(function(c){ return '<div class="ac-item" onmousedown="selectBagCustomer(\''+c.id+'\')">'+escapeHtml(c.name)+' <span style="color:var(--muted);font-size:11.5px;">'+escapeHtml(c.phone||'')+'</span></div>'; }).join('')
+    ? matches.map(function(c){ return '<div class="ac-item" onmousedown="selectBagCustomer(\''+c.id+'\')">'+escapeHtml(c.name)+' <span style="color:var(--muted);font-size:11.5px;">'+escapeHtml(c.phone?maskPhoneBR(c.phone):'')+'</span></div>'; }).join('')
     : '<div class="ac-item ac-empty">Nenhum cliente encontrado</div>';
   menu.classList.remove('hidden');
 }
@@ -2823,7 +2861,7 @@ function renderBagCustomerInfo(c){
   if(missing.length){
     info.innerHTML = '⚠️ Cadastro incompleto (falta '+missing.join(', ')+'). É necessário completar antes de enviar, pra emitir a nota promissória.<br><button type="button" class="btn small outline" style="margin-top:6px;" onclick="editBagCustomer(\''+c.id+'\')">Completar cadastro</button>';
   } else {
-    info.innerHTML = '✅ '+escapeHtml(c.phone)+' · CPF '+escapeHtml(c.cpf)+' · '+escapeHtml(formatCustomerAddress(c));
+    info.innerHTML = '✅ '+escapeHtml(maskPhoneBR(c.phone))+' · CPF '+escapeHtml(c.cpf)+' · '+escapeHtml(formatCustomerAddress(c));
   }
 }
 function fillBagPrice(){
@@ -3111,7 +3149,7 @@ async function printBagPromissoryNote(bagId){
   html += '<p>Aos <span class="np-line">'+(bag.deadline?fmtDate(bag.deadline):'____/____/______')+'</span>, pagarei(emos) por esta única via de NOTA PROMISSÓRIA a <strong>'+escapeHtml(storeName)+'</strong>, ou à sua ordem, a quantia de <strong>'+fmtMoney(total)+'</strong> ('+escapeHtml(valorPorExtenso(total))+'), em moeda corrente nacional, referente às peças retiradas em regime de "Bag Delivery" (sacola para experimentação em domicílio), relacionadas abaixo, comprometendo-me a devolvê-las em perfeito estado ou a efetuar o pagamento integral do valor acima na data de vencimento indicada.</p>';
   html += '<table><tr><th>Peça</th><th>Tam.</th><th>Qtd</th><th>Valor unit.</th></tr>'+itemsHtml+'</table>';
   html += '<p><strong>Emitente (devedor):</strong> '+escapeHtml(c.name)+'<br>';
-  html += '<strong>CPF:</strong> '+escapeHtml(c.cpf||'')+' &nbsp;&nbsp; <strong>Telefone:</strong> '+escapeHtml(c.phone||'')+'<br>';
+  html += '<strong>CPF:</strong> '+escapeHtml(c.cpf||'')+' &nbsp;&nbsp; <strong>Telefone:</strong> '+escapeHtml(c.phone?maskPhoneBR(c.phone):'')+'<br>';
   html += '<strong>Endereço:</strong> '+escapeHtml(formatCustomerAddress(c))+'</p>';
   html += '<p style="margin-top:20px;">Emitida por: <span class="np-line">'+escapeHtml(storeName)+'</span> &nbsp;&nbsp; Data de emissão: <span class="np-line">'+fmtDate(bag.sent_at)+'</span></p>';
   html += '<div class="np-sign"><div class="ln">'+escapeHtml(c.name)+' — assinatura</div></div>';
@@ -3251,7 +3289,7 @@ function openSellerForm(id){
   let html = '<h3>'+(id?'Editar vendedor(a)':'Novo(a) vendedor(a)')+'</h3>';
   html += '<div class="field" style="margin-bottom:8px;"><label>Nome</label><input id="sl_name" value="'+escapeHtml(sl.name)+'" placeholder="Nome do(a) vendedor(a)"></div>';
   html += '<div class="form-row">';
-  html += '<div class="field"><label>Telefone (opcional)</label><input id="sl_phone" value="'+escapeHtml(sl.phone||'')+'" placeholder="Ex: (11) 90000-0000"></div>';
+  html += '<div class="field"><label>Telefone (opcional)</label><input id="sl_phone" value="'+escapeHtml(maskPhoneBR(sl.phone||''))+'" placeholder="Ex: (11) 90000-0000" oninput="applyMask(this,maskPhoneBR)"></div>';
   html += '<div class="field"><label>Comissão (%)</label><input id="sl_commission" type="number" step="0.01" min="0" max="100" value="'+(sl.commission_percent||0)+'"></div>';
   html += '</div>';
   html += '<label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;margin-bottom:14px;line-height:1.5;"><label class="switch"><input type="checkbox" id="sl_active" '+(sl.active!==false?'checked':'')+'><span class="slider"></span></label> Vendedor(a) ativo(a)</label>';
@@ -3400,7 +3438,7 @@ async function renderClientes(){
     html += '<div class="card"><table><tr>'+(isComercialClientes?'':'<th style="width:24px;"><input type="checkbox" onchange="toggleAllCB(this,\'cliente_cb\')"></th>')+'<th>Nome</th><th>Telefone</th><th>E-mail</th><th>Nascimento</th><th>Cashback</th><th></th></tr>';
     customers.forEach(c=>{
       const nasc = (c.birth_day && c.birth_month) ? String(c.birth_day).padStart(2,'0')+'/'+String(c.birth_month).padStart(2,'0') : '—';
-      html += '<tr>'+(isComercialClientes?'':'<td><input type="checkbox" class="cliente_cb" value="'+c.id+'" onchange="updateBulkBar(\'cliente_cb\')"></td>')+'<td>'+escapeHtml(c.name)+'</td><td>'+escapeHtml(c.phone||'—')+'</td><td>'+escapeHtml(c.email||'—')+'</td><td>'+nasc+'</td><td>'+fmtMoney(c.cashback_balance)+'</td>';
+      html += '<tr>'+(isComercialClientes?'':'<td><input type="checkbox" class="cliente_cb" value="'+c.id+'" onchange="updateBulkBar(\'cliente_cb\')"></td>')+'<td>'+escapeHtml(c.name)+'</td><td>'+escapeHtml(c.phone?maskPhoneBR(c.phone):'—')+'</td><td>'+escapeHtml(c.email||'—')+'</td><td>'+nasc+'</td><td>'+fmtMoney(c.cashback_balance)+'</td>';
       html += '<td class="row-actions"><button class="btn small outline" onclick="openCustomerForm(\''+c.id+'\')">Editar</button>'+(isComercialClientes?'':' <button class="btn small danger" onclick="deleteCustomer(\''+c.id+'\')">Excluir</button>')+'</td></tr>';
     });
     html += '</table></div>';
@@ -3411,7 +3449,7 @@ function clientesReportData(){
   const headers = ['Nome','Telefone','E-mail','Nascimento','Cashback'];
   const rows = (customersLiteCache||[]).map(function(c){
     const nasc = (c.birth_day && c.birth_month) ? String(c.birth_day).padStart(2,'0')+'/'+String(c.birth_month).padStart(2,'0') : '';
-    return [ c.name, (c.phone||''), (c.email||''), nasc, String(c.cashback_balance||0).replace('.',',') ];
+    return [ c.name, (c.phone?maskPhoneBR(c.phone):''), (c.email||''), nasc, String(c.cashback_balance||0).replace('.',',') ];
   });
   return { headers, rows };
 }
@@ -3447,17 +3485,17 @@ function openCustomerForm(id, forBag){
   let html = '<h3>'+(id?'Editar cliente':'Adicionar cliente')+'</h3>';
   html += '<div class="field" style="margin-bottom:8px;"><label>Nome</label><input id="cu_name" value="'+escapeHtml(c.name)+'" placeholder="Nome do cliente"></div>';
   html += '<div class="form-row">';
-  html += '<div class="field"><label>Telefone</label><input id="cu_phone" value="'+escapeHtml(c.phone||'')+'" placeholder="Ex: (11) 90000-0000"></div>';
+  html += '<div class="field"><label>Telefone</label><input id="cu_phone" value="'+escapeHtml(maskPhoneBR(c.phone||''))+'" placeholder="Ex: (11) 90000-0000" oninput="applyMask(this,maskPhoneBR)"></div>';
   html += '<div class="field"><label>E-mail (opcional)</label><input id="cu_email" value="'+escapeHtml(c.email||'')+'" placeholder="Opcional"></div>';
   html += '</div>';
   html += '<div class="form-row">';
   html += '<div class="field"><label>Dia de nascimento</label><input id="cu_bday" type="number" min="1" max="31" value="'+(c.birth_day||'')+'"></div>';
   html += '<div class="field"><label>Mês de nascimento</label><input id="cu_bmonth" type="number" min="1" max="12" value="'+(c.birth_month||'')+'"></div>';
   html += '</div>';
-  html += '<div class="field" style="margin-bottom:8px;"><label>CPF</label><input id="cu_cpf" value="'+escapeHtml(c.cpf||'')+'" placeholder="000.000.000-00"></div>';
+  html += '<div class="field" style="margin-bottom:8px;"><label>CPF</label><input id="cu_cpf" value="'+escapeHtml(maskCPF(c.cpf||''))+'" placeholder="000.000.000-00" oninput="applyMask(this,maskCPF)"></div>';
   html += '<div class="section-title" style="margin-top:4px;">Endereço (necessário pra nota promissória da Bag Delivery)</div>';
   html += '<div class="form-row">';
-  html += '<div class="field"><label>CEP</label><input id="cu_cep" value="'+escapeHtml(c.cep||'')+'" placeholder="00000-000"></div>';
+  html += '<div class="field"><label>CEP</label><input id="cu_cep" value="'+escapeHtml(maskCEP(c.cep||''))+'" placeholder="00000-000" oninput="applyMask(this,maskCEP)"></div>';
   html += '<div class="field"><label>Rua / Logradouro</label><input id="cu_street" value="'+escapeHtml(c.street||'')+'"></div>';
   html += '</div>';
   html += '<div class="form-row">';
@@ -3475,7 +3513,7 @@ function openCustomerForm(id, forBag){
 async function saveCustomer(id){
   const name = document.getElementById('cu_name').value.trim();
   if(!name){ toast('Informe o nome do cliente.'); return; }
-  const phone = document.getElementById('cu_phone').value.trim();
+  const phone = document.getElementById('cu_phone').value.replace(/\D/g,'');
   if(!phone){ toast('Informe o telefone do cliente.'); return; }
   const bday = Number(document.getElementById('cu_bday').value)||0;
   const bmonth = Number(document.getElementById('cu_bmonth').value)||0;
@@ -4269,7 +4307,7 @@ async function generateInvoiceFromSale(saleId){
 }
 function openInvoiceForm(){
   let html = '<h3>Registrar nota manualmente</h3>';
-  html += '<div class="form-row"><div class="field"><label>Cliente</label><input id="nf_customer" placeholder="Nome do cliente"></div><div class="field"><label>CPF/CNPJ</label><input id="nf_doc" placeholder="Opcional"></div></div>';
+  html += '<div class="form-row"><div class="field"><label>Cliente</label><input id="nf_customer" placeholder="Nome do cliente"></div><div class="field"><label>CPF/CNPJ</label><input id="nf_doc" placeholder="Opcional" oninput="applyMask(this,maskCpfCnpj)"></div></div>';
   html += '<div class="form-row"><div class="field"><label>Data</label><input id="nf_date" type="date" value="'+todayISO()+'"></div><div class="field"><label>Valor total (R$)</label><input id="nf_total" type="number" step="0.01" value="0"></div></div>';
   html += '<div class="row-actions"><button class="btn" onclick="saveManualInvoice()">Registrar</button><button class="btn outline" onclick="closeModal()">Cancelar</button></div>';
   openModal(html);
@@ -4572,6 +4610,24 @@ const CATALOG_CSS = [
 /* JS estático do catálogo gerado — sem template literals, para não conflitar com a montagem acima */
 const CATALOG_JS = [
 'var sb = window.supabase.createClient(SB_URL, SB_ANON);',
+'function maskPhoneBR(value){',
+'  var d = (value||"").replace(/\\D/g,"").slice(0,11);',
+'  if(d.length===0) return "";',
+'  if(d.length<=2) return "("+d;',
+'  if(d.length<=6) return "("+d.slice(0,2)+") "+d.slice(2);',
+'  if(d.length<=10) return "("+d.slice(0,2)+") "+d.slice(2,6)+"-"+d.slice(6);',
+'  return "("+d.slice(0,2)+") "+d.slice(2,7)+"-"+d.slice(7);',
+'}',
+'function maskCEP(value){',
+'  var d = (value||"").replace(/\\D/g,"").slice(0,8);',
+'  return d.length<=5 ? d : d.slice(0,5)+"-"+d.slice(5);',
+'}',
+'function applyMask(inputEl, maskFn){',
+'  var wasAtEnd = inputEl.selectionStart === inputEl.value.length;',
+'  var masked = maskFn(inputEl.value);',
+'  inputEl.value = masked;',
+'  if(wasAtEnd){ try{ inputEl.setSelectionRange(masked.length, masked.length); }catch(e){} }',
+'}',
 'var CATALOG = { settings:null, categories:[], products:[], media:[], banners:[], giftRules:[], activeTab:"inicio", filterCategoryId:null, heroSlide:0 };',
 'var cart = [];',
 'var lastCartChangeAt = Date.now();',
@@ -5136,10 +5192,10 @@ const CATALOG_JS = [
 '  return card;',
 '}',
 'function openWaitlistForm(p){',
-'  var m = genericModal("<div class=\\"myorders-box\\"><strong>Avise-me quando chegar</strong><p style=\\"color:#8a7568;\\">"+esc(p.name)+"</p><input id=\\"wl_name\\" placeholder=\\"Seu nome\\"><input id=\\"wl_phone\\" placeholder=\\"Seu telefone (com DDD)\\"><button class=\\"checkout-btn\\" id=\\"wl_btn\\" style=\\"margin-top:0;\\">Quero ser avisado(a)</button></div>");',
+'  var m = genericModal("<div class=\\"myorders-box\\"><strong>Avise-me quando chegar</strong><p style=\\"color:#8a7568;\\">"+esc(p.name)+"</p><input id=\\"wl_name\\" placeholder=\\"Seu nome\\"><input id=\\"wl_phone\\" placeholder=\\"Seu telefone (com DDD)\\" oninput=\\"applyMask(this,maskPhoneBR)\\"><button class=\\"checkout-btn\\" id=\\"wl_btn\\" style=\\"margin-top:0;\\">Quero ser avisado(a)</button></div>");',
 '  document.getElementById("wl_btn").onclick = async function(){',
 '    var name = (document.getElementById("wl_name").value||"").trim();',
-'    var phone = (document.getElementById("wl_phone").value||"").trim();',
+'    var phone = (document.getElementById("wl_phone").value||"").replace(/\\D/g,"");',
 '    if(!name || !phone){ alert("Preencha nome e telefone."); return; }',
 '    await sb.from("waitlist").insert([{ product_id: p.id, customer_name: name, phone: phone }]);',
 '    m.close();',
@@ -5230,9 +5286,9 @@ const CATALOG_JS = [
 '  return { overlay: ov, box: box, close: closeModalBox };',
 '}',
 'function openMyOrders(){',
-'  var m = genericModal("<div class=\\"myorders-box\\"><strong>Meus pedidos</strong><p style=\\"color:#8a7568;\\">Digite o telefone usado na compra para ver seu histórico e saldo de cashback.</p><input id=\\"mo_phone\\" placeholder=\\"Seu telefone (com DDD)\\"><button class=\\"checkout-btn\\" id=\\"mo_btn\\" style=\\"margin-top:0;\\">Consultar</button><div id=\\"mo_result\\"></div></div>");',
+'  var m = genericModal("<div class=\\"myorders-box\\"><strong>Meus pedidos</strong><p style=\\"color:#8a7568;\\">Digite o telefone usado na compra para ver seu histórico e saldo de cashback.</p><input id=\\"mo_phone\\" placeholder=\\"Seu telefone (com DDD)\\" oninput=\\"applyMask(this,maskPhoneBR)\\"><button class=\\"checkout-btn\\" id=\\"mo_btn\\" style=\\"margin-top:0;\\">Consultar</button><div id=\\"mo_result\\"></div></div>");',
 '  document.getElementById("mo_btn").onclick = async function(){',
-'    var phone = (document.getElementById("mo_phone").value||"").trim();',
+'    var phone = (document.getElementById("mo_phone").value||"").replace(/\\D/g,"");',
 '    if(!phone) return;',
 '    var res = await sb.rpc("get_my_orders", { p_phone: phone });',
 '    var box = document.getElementById("mo_result");',
@@ -5367,7 +5423,7 @@ const CATALOG_JS = [
 '  var couponInputValue = appliedCoupon ? appliedCoupon.code : (refCouponCode||"");',
 '  var footHtml = "<div class=\\"coupon-row\\"><input id=\\"coupon_input\\" placeholder=\\"Cupom de desconto\\" value=\\""+esc(couponInputValue)+"\\"><button type=\\"button\\" onclick=\\"applyCoupon()\\">Aplicar</button></div>";',
 '  if(couponMessage){ footHtml += "<div class=\\"coupon-msg "+(appliedCoupon?"ok":"err")+"\\">"+esc(couponMessage)+"</div>"; }',
-'  footHtml += "<div class=\\"shipping-box\\"><div class=\\"shipping-row\\"><input id=\\"shipping_cep\\" placeholder=\\"Seu CEP (só números)\\" maxlength=\\"9\\" value=\\""+(document.getElementById("shipping_cep")?esc(document.getElementById("shipping_cep").value):"")+"\\"><button type=\\"button\\" id=\\"shipping_calc_btn\\" onclick=\\"calculateShipping()\\" "+(shippingLoading?"disabled":"")+">"+(shippingLoading?"Calculando...":"Calcular frete")+"</button></div>";',
+'  footHtml += "<div class=\\"shipping-box\\"><div class=\\"shipping-row\\"><input id=\\"shipping_cep\\" placeholder=\\"Seu CEP (só números)\\" maxlength=\\"9\\" oninput=\\"applyMask(this,maskCEP)\\" value=\\""+(document.getElementById("shipping_cep")?esc(maskCEP(document.getElementById("shipping_cep").value)):"")+"\\"><button type=\\"button\\" id=\\"shipping_calc_btn\\" onclick=\\"calculateShipping()\\" "+(shippingLoading?"disabled":"")+">"+(shippingLoading?"Calculando...":"Calcular frete")+"</button></div>";',
 '  if(shippingError){ footHtml += "<div class=\\"shipping-msg\\">"+esc(shippingError)+"</div>"; }',
 '  shippingOptions.forEach(function(opt, oi){',
 '    var isSel = selectedShipping && selectedShipping.id===opt.id;',
@@ -5375,7 +5431,7 @@ const CATALOG_JS = [
 '  });',
 '  footHtml += "</div>";',
 '  footHtml += "<input id=\\"chk_name\\" placeholder=\\"Seu nome\\">";',
-'  footHtml += "<input id=\\"chk_phone\\" placeholder=\\"Seu telefone (com DDD)\\">";',
+'  footHtml += "<input id=\\"chk_phone\\" placeholder=\\"Seu telefone (com DDD)\\" oninput=\\"applyMask(this,maskPhoneBR)\\">";',
 '  footHtml += "<select id=\\"chk_source\\"><option value=\\"\\">Como você nos conheceu?</option><option value=\\"Instagram\\">Instagram</option><option value=\\"Facebook\\">Facebook</option><option value=\\"TikTok\\">TikTok</option><option value=\\"Google\\">Google</option><option value=\\"Indicação de amiga(o)\\">Indicação de amiga(o)</option><option value=\\"WhatsApp\\">WhatsApp</option><option value=\\"Já sou cliente\\">Já sou cliente</option><option value=\\"Outro\\">Outro</option></select>";',
 '  footHtml += "<div class=\\"line\\"><span>Subtotal</span><span>"+money(subtotal)+"</span></div>";',
 '  if(discount>0){ footHtml += "<div class=\\"line\\"><span>Desconto</span><span>-"+money(discount)+"</span></div>"; }',
@@ -5407,7 +5463,7 @@ const CATALOG_JS = [
 '  if(cart.length===0) return;',
 '  if(!selectedShipping){ alert("Calcule o frete antes de continuar."); return; }',
 '  var name = (document.getElementById("chk_name").value||"").trim();',
-'  var phone = (document.getElementById("chk_phone").value||"").trim();',
+'  var phone = (document.getElementById("chk_phone").value||"").replace(/\\D/g,"");',
 '  var source = (document.getElementById("chk_source").value||"").trim();',
 '  if(!name || !phone){ alert("Preencha seu nome e telefone para continuar."); return; }',
 '  if(!source){ alert("Conta pra gente como você conheceu a JJ Solene antes de continuar."); return; }',
@@ -5445,7 +5501,7 @@ const CATALOG_JS = [
 '  if(cart.length===0) return;',
 '  if(!selectedShipping){ alert("Calcule o frete antes de continuar."); return; }',
 '  var name = (document.getElementById("chk_name").value||"").trim();',
-'  var phone = (document.getElementById("chk_phone").value||"").trim();',
+'  var phone = (document.getElementById("chk_phone").value||"").replace(/\\D/g,"");',
 '  var source = (document.getElementById("chk_source").value||"").trim();',
 '  if(!name || !phone){ alert("Preencha seu nome e telefone para continuar."); return; }',
 '  if(!source){ alert("Conta pra gente como você conheceu a JJ Solene antes de continuar."); return; }',
@@ -5648,7 +5704,7 @@ async function renderConfig(){
   html += '</div>';
   html += '<div class="form-row">';
   html += '<div class="field"><label>Instagram</label><input id="cf_ig" value="'+escapeHtml(s.instagram)+'"></div>';
-  html += '<div class="field"><label>WhatsApp (com DDD, ex: 11987654321)</label><input id="cf_wpp" value="'+escapeHtml(s.whatsapp)+'"></div>';
+  html += '<div class="field"><label>WhatsApp (com DDD)</label><input id="cf_wpp" value="'+escapeHtml(maskPhoneBR(s.whatsapp||''))+'" placeholder="Ex: (11) 98765-4321" oninput="applyMask(this,maskPhoneBR)"></div>';
   html += '</div>';
   html += '<div class="field" style="margin-bottom:8px;"><label>Texto de entrega (aparece no topo do catálogo)</label><input id="cf_delivery" value="'+escapeHtml(s.delivery_text)+'"></div>';
   html += '<div class="form-row">';
@@ -5656,7 +5712,7 @@ async function renderConfig(){
   html += '<div class="field"><label>Política de troca (aparece na etiqueta impressa)</label><input id="cf_exchange" value="'+escapeHtml(s.exchange_policy_text||'')+'" placeholder="Ex: Sete dias corridos para troca"></div>';
   html += '</div>';
   html += '<div class="form-row">';
-  html += '<div class="field"><label>CEP de origem (de onde a loja despacha, só números)</label><input id="cf_origin_cep" value="'+escapeHtml(s.origin_cep||'')+'" placeholder="Ex: 01310100" maxlength="9"></div>';
+  html += '<div class="field"><label>CEP de origem (de onde a loja despacha)</label><input id="cf_origin_cep" value="'+escapeHtml(maskCEP(s.origin_cep||''))+'" placeholder="Ex: 01310-100" maxlength="9" oninput="applyMask(this,maskCEP)"></div>';
   html += '</div>';
   html += '</div>';
 
@@ -5669,11 +5725,11 @@ async function renderConfig(){
   html += '<div class="note">Opcional. Preenchendo os dois campos de uma pessoa, o botão dela aparece no rodapé do catálogo. Se deixar em branco, o rodapé usa o WhatsApp geral da loja.</div>';
   html += '<div class="form-row">';
   html += '<div class="field"><label>Nome da 1ª atendente</label><input id="cf_at1_name" value="'+escapeHtml(s.attendant1_name||'')+'" placeholder="Ex: Joy"></div>';
-  html += '<div class="field"><label>WhatsApp da 1ª atendente</label><input id="cf_at1_phone" value="'+escapeHtml(s.attendant1_phone||'')+'" placeholder="Ex: (11) 98719-0466"></div>';
+  html += '<div class="field"><label>WhatsApp da 1ª atendente</label><input id="cf_at1_phone" value="'+escapeHtml(maskPhoneBR(s.attendant1_phone||''))+'" placeholder="Ex: (11) 98719-0466" oninput="applyMask(this,maskPhoneBR)"></div>';
   html += '</div>';
   html += '<div class="form-row">';
   html += '<div class="field"><label>Nome da 2ª atendente</label><input id="cf_at2_name" value="'+escapeHtml(s.attendant2_name||'')+'" placeholder="Ex: Jess"></div>';
-  html += '<div class="field"><label>WhatsApp da 2ª atendente</label><input id="cf_at2_phone" value="'+escapeHtml(s.attendant2_phone||'')+'" placeholder="Ex: (11) 98719-0466"></div>';
+  html += '<div class="field"><label>WhatsApp da 2ª atendente</label><input id="cf_at2_phone" value="'+escapeHtml(maskPhoneBR(s.attendant2_phone||''))+'" placeholder="Ex: (11) 98719-0466" oninput="applyMask(this,maskPhoneBR)"></div>';
   html += '</div>';
   html += '</div>';
 
