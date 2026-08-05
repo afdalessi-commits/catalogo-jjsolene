@@ -5578,6 +5578,9 @@ async function renderConfig(){
   html += '<div class="field"><label>Site (aparece na etiqueta impressa)</label><input id="cf_website" value="'+escapeHtml(s.website_url||'')+'" placeholder="Ex: www.jjsolene.com.br"></div>';
   html += '<div class="field"><label>Política de troca (aparece na etiqueta impressa)</label><input id="cf_exchange" value="'+escapeHtml(s.exchange_policy_text||'')+'" placeholder="Ex: Sete dias corridos para troca"></div>';
   html += '</div>';
+  html += '<div class="form-row">';
+  html += '<div class="field"><label>CEP de origem (de onde a loja despacha, só números)</label><input id="cf_origin_cep" value="'+escapeHtml(s.origin_cep||'')+'" placeholder="Ex: 01310100" maxlength="9"></div>';
+  html += '</div>';
   html += '</div>';
 
   html += '<div class="form-block"><h4>Integrações</h4>';
@@ -5731,6 +5734,7 @@ async function saveConfig(){
     instagram: document.getElementById('cf_ig').value.trim(),
     website_url: document.getElementById('cf_website').value.trim(),
     exchange_policy_text: document.getElementById('cf_exchange').value.trim(),
+    origin_cep: document.getElementById('cf_origin_cep').value.trim().replace(/\D/g,''),
     google_client_id: document.getElementById('cf_google_client').value.trim(),
     whatsapp: document.getElementById('cf_wpp').value.trim(),
     delivery_text: document.getElementById('cf_delivery').value.trim(),
