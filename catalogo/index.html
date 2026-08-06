@@ -148,6 +148,14 @@ body{padding-bottom:76px;}
 .view-head h2{font-size:16.5px;color:#4a1523;font-family:"Playfair Display",serif;}
 .view-head a{font-size:12px;color:#6b1f33;font-weight:700;text-decoration:none;cursor:pointer;background:none;border:none;}
 .filter-chip{display:inline-flex;align-items:center;gap:6px;background:#f0e3d3;color:#4a1523;font-size:12px;font-weight:600;padding:6px 12px;border-radius:999px;margin:0 16px 10px;cursor:pointer;}
+.filter-chips{display:flex;flex-wrap:wrap;padding:0 16px;}
+.filter-panel strong{display:block;font-size:16px;margin-bottom:10px;}
+.filter-section{margin-bottom:14px;}
+.filter-section h4{font-size:12px;color:#8a7568;margin:0 0 6px;text-transform:uppercase;letter-spacing:0.4px;}
+.filter-pillrow{display:flex;flex-wrap:wrap;gap:6px;}
+.filter-pillrow button{border:1.5px solid #f0dfe3;background:#fff;border-radius:999px;padding:6px 12px;font-size:12.5px;cursor:pointer;font-weight:600;color:#4a1523;}
+.filter-pillrow button.sel{background:#6b1f33;color:#fff;border-color:#6b1f33;}
+.filter-swatch-btn{display:inline-flex;align-items:center;gap:6px;}
 .fav-btn{position:absolute;top:8px;right:8px;width:27px;height:27px;border-radius:50%;background:rgba(255,255,255,0.92);border:none;display:flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer;color:#b3a494;z-index:2;}
 .fav-btn.active{color:#c0392b;}
 .price-row{display:flex;justify-content:space-between;align-items:flex-end;gap:6px;}
@@ -241,7 +249,11 @@ function applyMask(inputEl, maskFn){
   inputEl.value = masked;
   if(wasAtEnd){ try{ inputEl.setSelectionRange(masked.length, masked.length); }catch(e){} }
 }
-var CATALOG = { settings:null, categories:[], products:[], media:[], banners:[], giftRules:[], activeTab:"inicio", filterCategoryId:null, heroSlide:0 };
+var CATALOG = { settings:null, categories:[], products:[], media:[], banners:[], giftRules:[], activeTab:"inicio", filterCategoryId:null, heroSlide:0, filters:{sort:"novidades",priceMin:null,priceMax:null,priceLabel:null,colors:[],sizes:[]}, bestsellerCounts:null };
+function hasActiveFilters(){
+  var f = CATALOG.filters;
+  return f.sort!=="novidades" || f.priceMin!=null || f.priceMax!=null || f.colors.length>0 || f.sizes.length>0;
+}
 var cart = [];
 var lastCartChangeAt = Date.now();
 var cartNudgeShown = false;
@@ -318,7 +330,8 @@ var UI_ICONS = {
   sparkle: "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linejoin=\"round\"><path d=\"M12 3.5 13.8 9.2 19.5 11 13.8 12.8 12 18.5 10.2 12.8 4.5 11 10.2 9.2z\"/></svg>",
   heart: "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 20.3s-7.2-4.4-9.6-8.7C.7 8.1 2.5 4.7 6 4.7c2 0 3.4 1 4.3 2.4C11.2 5.7 12.6 4.7 14.5 4.7c3.6 0 5.4 3.4 3.6 6.9-2.4 4.3-6.1 8.7-6.1 8.7z\"/></svg>",
   search: "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"10.5\" cy=\"10.5\" r=\"6.5\"/><path d=\"M20 20l-4.8-4.8\"/></svg>",
-  user: "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"8\" r=\"3.6\"/><path d=\"M4.5 20c1.4-3.6 4.3-5.5 7.5-5.5s6.1 1.9 7.5 5.5\"/></svg>"
+  user: "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"8\" r=\"3.6\"/><path d=\"M4.5 20c1.4-3.6 4.3-5.5 7.5-5.5s6.1 1.9 7.5 5.5\"/></svg>",
+  filter: "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M4 6h16M7 12h10M10.5 18h3\"/></svg>"
 };
 var FOOTER_ICONS = {
   box: "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 8l9-4 9 4-9 4-9-4z\"/><path d=\"M3 8v8l9 4 9-4V8\"/><path d=\"M12 12v8\"/><path d=\"M17 3.3v3M15.5 4.8h3\"/></svg>",
@@ -544,6 +557,8 @@ function buildHeader(data){
   logoWrap.style.cursor="pointer"; logoWrap.onclick=function(){ CATALOG.filterCategoryId=null; switchTab("inicio"); };
   header.appendChild(logoWrap);
   var actions = document.createElement("div"); actions.className="header-actions";
+  var filterBtn = document.createElement("button"); filterBtn.className="icon-btn"; filterBtn.id="filterIconBtn"; filterBtn.innerHTML = UI_ICONS.filter+"<span class=\"icon-badge hidden\" id=\"filterBadge\">•</span>"; filterBtn.title="Filtrar produtos"; filterBtn.onclick=openFilters;
+  actions.appendChild(filterBtn);
   var searchBtn = document.createElement("button"); searchBtn.className="icon-btn"; searchBtn.innerHTML=UI_ICONS.search; searchBtn.title="Buscar produtos"; searchBtn.onclick=openSearch;
   actions.appendChild(searchBtn);
   var acctBtn = document.createElement("button"); acctBtn.className="icon-btn"; acctBtn.innerHTML=UI_ICONS.user; acctBtn.title="Meus pedidos"; acctBtn.onclick=openMyOrders;
@@ -642,6 +657,37 @@ function buildViewCategorias(){
   panel.appendChild(grid);
   if(!any){ panel.appendChild(emptyView("Nenhuma categoria com produtos ainda.")); }
 }
+function applyFilters(list){
+  var f = CATALOG.filters;
+  if(f.priceMin!=null) list = list.filter(function(p){ return Number(p.sale_price)>=f.priceMin; });
+  if(f.priceMax!=null) list = list.filter(function(p){ return Number(p.sale_price)<=f.priceMax; });
+  if(f.colors.length) list = list.filter(function(p){ return p.color && f.colors.indexOf(p.color.trim())!==-1; });
+  if(f.sizes.length) list = list.filter(function(p){
+    return availSizes(p).some(function(sz){ return sz.avail>0 && f.sizes.indexOf(sz.size)!==-1; });
+  });
+  return list;
+}
+function sortProducts(list){
+  var s = CATALOG.filters.sort;
+  list = list.slice();
+  if(s==="menor_preco") list.sort(function(a,b){ return Number(a.sale_price)-Number(b.sale_price); });
+  else if(s==="maior_preco") list.sort(function(a,b){ return Number(b.sale_price)-Number(a.sale_price); });
+  else if(s==="mais_vendidos"){
+    var counts = CATALOG.bestsellerCounts || new Map();
+    list.sort(function(a,b){ return (counts.get(b.id)||0) - (counts.get(a.id)||0); });
+  } else list.sort(function(a,b){ return new Date(b.created_at||0) - new Date(a.created_at||0); });
+  return list;
+}
+async function ensureBestsellerCounts(){
+  if(CATALOG.bestsellerCounts) return CATALOG.bestsellerCounts;
+  try{
+    var res = await sb.rpc("get_bestseller_counts");
+    var m = new Map();
+    (res.data||[]).forEach(function(row){ m.set(row.product_id, Number(row.total_sold)||0); });
+    CATALOG.bestsellerCounts = m;
+  }catch(e){ CATALOG.bestsellerCounts = new Map(); }
+  return CATALOG.bestsellerCounts;
+}
 function buildViewNovidades(){
   var panel = document.getElementById("view-novidades");
   panel.innerHTML = "";
@@ -649,12 +695,22 @@ function buildViewNovidades(){
   var head = document.createElement("div"); head.className="view-head";
   head.innerHTML = "<h2>"+(cat?esc(cat.icon+" "+cat.name):"Novidades")+"</h2>";
   panel.appendChild(head);
-  if(cat){
-    var chip = document.createElement("div"); chip.className="filter-chip"; chip.textContent = "✕ limpar filtro";
-    chip.onclick = function(){ CATALOG.filterCategoryId=null; buildViewNovidades(); };
-    panel.appendChild(chip);
+  var chipsRow = document.createElement("div"); chipsRow.className="filter-chips";
+  function addChip(label, onRemove){
+    var chip = document.createElement("div"); chip.className="filter-chip"; chip.textContent = "✕ "+label;
+    chip.onclick = onRemove;
+    chipsRow.appendChild(chip);
   }
-  var list = cat ? CATALOG.products.filter(function(p){return p.category_id===cat.id;}) : newestProducts();
+  if(cat){ addChip(cat.name, function(){ CATALOG.filterCategoryId=null; buildViewNovidades(); }); }
+  if(CATALOG.filters.priceLabel){ addChip(CATALOG.filters.priceLabel, function(){ CATALOG.filters.priceMin=null; CATALOG.filters.priceMax=null; CATALOG.filters.priceLabel=null; updateFilterBadge(); buildViewNovidades(); }); }
+  CATALOG.filters.colors.forEach(function(c){ addChip(c, function(){ var i=CATALOG.filters.colors.indexOf(c); if(i!==-1) CATALOG.filters.colors.splice(i,1); updateFilterBadge(); buildViewNovidades(); }); });
+  CATALOG.filters.sizes.forEach(function(sz){ addChip(sz, function(){ var i=CATALOG.filters.sizes.indexOf(sz); if(i!==-1) CATALOG.filters.sizes.splice(i,1); updateFilterBadge(); buildViewNovidades(); }); });
+  if(cat || hasActiveFilters()){
+    addChip("Limpar tudo", function(){ CATALOG.filterCategoryId=null; CATALOG.filters={sort:"novidades",priceMin:null,priceMax:null,priceLabel:null,colors:[],sizes:[]}; updateFilterBadge(); buildViewNovidades(); });
+  }
+  if(chipsRow.children.length){ panel.appendChild(chipsRow); }
+  var base = cat ? CATALOG.products.filter(function(p){return p.category_id===cat.id;}) : CATALOG.products;
+  var list = hasActiveFilters() ? sortProducts(applyFilters(base)) : (cat ? base : newestProducts());
   var grid = document.createElement("div"); grid.className="grid"; grid.style.padding="0 16px 20px";
   list.forEach(function(p){ grid.appendChild(buildCard(p)); });
   panel.appendChild(grid);
@@ -882,6 +938,130 @@ function openSearch(){
     emptyMsg.style.display="none";
     matches.slice(0,20).forEach(function(p){ results.appendChild(buildCard(p)); });
   });
+}
+var PRICE_RANGES = [{label:"Até R$100",min:0,max:100},{label:"R$100 a R$150",min:100,max:150},{label:"R$150 a R$200",min:150,max:200},{label:"R$200 a R$300",min:200,max:300},{label:"Acima de R$300",min:300,max:null}];
+var SIZE_ORDER = ["EPP","PP","P","M","G","GG","EGG","XG","XGG"];
+function distinctColors(){
+  var seen = {}, out = [];
+  CATALOG.products.forEach(function(p){
+    if(!p.color) return;
+    var key = p.color.trim().toLowerCase();
+    if(seen[key]) return;
+    seen[key] = true;
+    out.push({ label: p.color.trim(), hex: p.color_hex||null });
+  });
+  return out;
+}
+function distinctSizes(){
+  var seen = {}, out = [];
+  CATALOG.products.forEach(function(p){
+    availSizes(p).forEach(function(sz){
+      if(seen[sz.size]) return;
+      seen[sz.size] = true; out.push(sz.size);
+    });
+  });
+  out.sort(function(a,b){
+    var ia = SIZE_ORDER.indexOf(a), ib = SIZE_ORDER.indexOf(b);
+    if(ia===-1 && ib===-1) return 0;
+    if(ia===-1) return 1;
+    if(ib===-1) return -1;
+    return ia-ib;
+  });
+  return out;
+}
+function updateFilterBadge(){
+  var badge = document.getElementById("filterBadge");
+  if(badge){ badge.classList.toggle("hidden", !hasActiveFilters()); }
+}
+function openFilters(){
+  var colors = distinctColors(), sizes = distinctSizes();
+  var draft = { sort:CATALOG.filters.sort, priceMin:CATALOG.filters.priceMin, priceMax:CATALOG.filters.priceMax, priceLabel:CATALOG.filters.priceLabel, colors:CATALOG.filters.colors.slice(), sizes:CATALOG.filters.sizes.slice() };
+  var html = "<div class=\"filter-panel\"><strong>Filtrar produtos</strong>";
+  html += "<div class=\"filter-section\"><h4>Ordenar por</h4><div class=\"filter-pillrow\" id=\"fSort\">";
+  var sortOpts = [["novidades","Novidades"],["mais_vendidos","Mais vendidos"],["menor_preco","Menor preço"],["maior_preco","Maior preço"]];
+  sortOpts.forEach(function(s){
+    html += "<button type=\"button\" data-val=\""+s[0]+"\" class=\""+(draft.sort===s[0]?"sel":"")+"\">"+s[1]+"</button>";
+  });
+  html += "</div></div>";
+  html += "<div class=\"filter-section\"><h4>Preço</h4><div class=\"filter-pillrow\" id=\"fPrice\">";
+  PRICE_RANGES.forEach(function(r,i){
+    var sel = draft.priceMin===r.min && draft.priceMax===r.max;
+    html += "<button type=\"button\" data-i=\""+i+"\" class=\""+(sel?"sel":"")+"\">"+r.label+"</button>";
+  });
+  html += "</div></div>";
+  if(colors.length){
+    html += "<div class=\"filter-section\"><h4>Cor</h4><div class=\"filter-pillrow\" id=\"fColors\">";
+    colors.forEach(function(c){
+      var sel = draft.colors.indexOf(c.label)!==-1;
+      html += "<button type=\"button\" data-val=\""+esc(c.label)+"\" class=\"filter-swatch-btn "+(sel?"sel":"")+"\"><span class=\"pcolor-dot\" style=\""+(c.hex?"background:"+c.hex+";":"")+"\"></span>"+esc(c.label)+"</button>";
+    });
+    html += "</div></div>";
+  }
+  if(sizes.length){
+    html += "<div class=\"filter-section\"><h4>Tamanho</h4><div class=\"psizes\" id=\"fSizes\">";
+    sizes.forEach(function(s){
+      html += "<button type=\"button\" data-val=\""+esc(s)+"\" class=\""+(draft.sizes.indexOf(s)!==-1?"sel":"")+"\">"+esc(s)+"</button>";
+    });
+    html += "</div></div>";
+  }
+  html += "<button type=\"button\" class=\"checkout-btn\" id=\"fApply\" style=\"margin-top:14px;\">Aplicar filtros</button>";
+  html += "<button type=\"button\" class=\"filter-chip\" id=\"fClear\" style=\"width:100%;justify-content:center;margin-top:8px;\">✕ Limpar filtros</button>";
+  html += "</div>";
+  var m = genericModal(html);
+  m.box.style.maxWidth = "420px";
+  Array.prototype.forEach.call(document.querySelectorAll("#fSort button"), function(btn){
+    btn.onclick = function(){
+      draft.sort = btn.getAttribute("data-val");
+      Array.prototype.forEach.call(document.querySelectorAll("#fSort button"), function(b){ b.classList.toggle("sel", b===btn); });
+    };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("#fPrice button"), function(btn){
+    btn.onclick = function(){
+      var i = Number(btn.getAttribute("data-i"));
+      var already = draft.priceMin===PRICE_RANGES[i].min && draft.priceMax===PRICE_RANGES[i].max;
+      Array.prototype.forEach.call(document.querySelectorAll("#fPrice button"), function(b){ b.classList.remove("sel"); });
+      if(already){ draft.priceMin=null; draft.priceMax=null; draft.priceLabel=null; }
+      else{ draft.priceMin=PRICE_RANGES[i].min; draft.priceMax=PRICE_RANGES[i].max; draft.priceLabel=PRICE_RANGES[i].label; btn.classList.add("sel"); }
+    };
+  });
+  var colorsEl = document.getElementById("fColors");
+  if(colorsEl){
+    Array.prototype.forEach.call(colorsEl.querySelectorAll("button"), function(btn){
+      btn.onclick = function(){
+        var val = btn.getAttribute("data-val");
+        var idx = draft.colors.indexOf(val);
+        if(idx===-1){ draft.colors.push(val); btn.classList.add("sel"); }
+        else{ draft.colors.splice(idx,1); btn.classList.remove("sel"); }
+      };
+    });
+  }
+  var sizesEl = document.getElementById("fSizes");
+  if(sizesEl){
+    Array.prototype.forEach.call(sizesEl.querySelectorAll("button"), function(btn){
+      btn.onclick = function(){
+        var val = btn.getAttribute("data-val");
+        var idx = draft.sizes.indexOf(val);
+        if(idx===-1){ draft.sizes.push(val); btn.classList.add("sel"); }
+        else{ draft.sizes.splice(idx,1); btn.classList.remove("sel"); }
+      };
+    });
+  }
+  document.getElementById("fApply").onclick = async function(){
+    if(draft.sort==="mais_vendidos" && !CATALOG.bestsellerCounts){
+      document.getElementById("fApply").textContent = "Carregando...";
+      await ensureBestsellerCounts();
+    }
+    CATALOG.filters = draft;
+    updateFilterBadge();
+    m.close();
+    switchTab("novidades");
+  };
+  document.getElementById("fClear").onclick = function(){
+    CATALOG.filters = { sort:"novidades", priceMin:null, priceMax:null, priceLabel:null, colors:[], sizes:[] };
+    updateFilterBadge();
+    m.close();
+    switchTab("novidades");
+  };
 }
 function genericModal(innerHtml){
   var ov = document.createElement("div"); ov.className="overlay show"; ov.style.zIndex="80";
