@@ -1244,7 +1244,7 @@ async function deleteOrderAction(id){
     return;
   }
   if(orderStatus==='pendente'){
-    try{ await q(SUPA.rpc('cancel_order', { p_order_id: id })); }catch(e){ console.error('Erro ao liberar estoque reservado antes de excluir:', e); }
+    await q(SUPA.rpc('cancel_order', { p_order_id: id }));
   }
   for(const s of linkedSales){
     await q(SUPA.from('sale_items').delete().eq('sale_id', s.id));
@@ -1793,71 +1793,19 @@ function getCropperRoot(){
   if(!root){ root = document.createElement('div'); root.id = 'cropperOverlayRoot'; document.body.appendChild(root); }
   return root;
 }
-function showCropperLoading(message){
-  const root = getCropperRoot();
-  root.innerHTML = '<div class="modal-bg" style="z-index:300;"><div class="modal" style="max-width:320px;text-align:center;">'
-    + '<h3>Preparando foto…</h3>'
-    + '<div class="note" style="margin:10px 0;">'+escapeHtml(message)+'</div>'
-    + '<div class="spinner" style="margin:14px auto;width:32px;height:32px;border:3px solid #eee;border-top-color:var(--primary,#a33);border-radius:50%;animation:spin 0.8s linear infinite;"></div>'
-    + '</div></div>'
-    + '<style>@keyframes spin{to{transform:rotate(360deg);}}</style>';
-}
 const CATALOG_PAGE_BG = '#f7efe2';
-async function compositeOnPageBg(blob){
-  const img = await new Promise(function(resolve, reject){
-    const im = new Image();
-    im.onload = function(){ resolve(im); };
-    im.onerror = reject;
-    im.src = URL.createObjectURL(blob);
-  });
-  const raw = document.createElement('canvas');
-  raw.width = img.naturalWidth; raw.height = img.naturalHeight;
-  const rctx = raw.getContext('2d');
-  rctx.drawImage(img,0,0);
-  // Endurece o canal alfa (sem meio-termo) pra evitar "fantasmas" de sombra
-  // translúcida (ex: sombra do chão) que apareceriam como mancha ao
-  // misturar com o fundo em vez de sumir de vez. Corte mais rígido (190)
-  // pra tratar áreas de confiança duvidosa como fundo, não como produto.
-  const imgData = rctx.getImageData(0,0,raw.width,raw.height);
-  const d = imgData.data;
-  for(let i=3;i<d.length;i+=4){ d[i] = d[i] < 190 ? 0 : 255; }
-  rctx.putImageData(imgData,0,0);
-
-  const canvas = document.createElement('canvas');
-  canvas.width = raw.width; canvas.height = raw.height;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = CATALOG_PAGE_BG;
-  ctx.fillRect(0,0,canvas.width,canvas.height);
-  ctx.drawImage(raw,0,0);
-  return await new Promise(function(resolve){ canvas.toBlob(resolve, 'image/jpeg', 0.92); });
-}
-async function removeBackgroundToPageBg(file){
-  const mod = await import('https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.5.8/dist/index.mjs');
-  const noBgBlob = await mod.removeBackground(file, { model: 'isnet_quint8' });
-  return await compositeOnPageBg(noBgBlob);
-}
 async function openPhotoCropper(input){
   const file = input.files[0];
   if(!file) return;
-  const rawUrl = URL.createObjectURL(file);
   const onConfirm = function(blob){
     window._croppedPhotoBlob = blob;
     const img = document.getElementById('f_photo_preview');
     img.src = URL.createObjectURL(blob);
     img.classList.remove('hidden');
   };
-  showCropperLoading('Removendo o fundo da foto automaticamente… isso pode levar de 10 a 20 segundos.');
-  try{
-    const bgBlob = await removeBackgroundToPageBg(file);
-    openPhotoCropOverlay(URL.createObjectURL(bgBlob), onConfirm, { rawUrl: rawUrl });
-  }catch(e){
-    console.warn('Falha ao remover fundo automaticamente', e);
-    toast('Não consegui remover o fundo automaticamente. Você pode recortar a foto original normalmente.');
-    openPhotoCropOverlay(rawUrl, onConfirm, {});
-  }
+  openPhotoCropOverlay(URL.createObjectURL(file), onConfirm);
 }
-function openPhotoCropOverlay(imageUrl, onConfirm, opts){
-  opts = opts || {};
+function openPhotoCropOverlay(imageUrl, onConfirm){
   const root = getCropperRoot();
   root.innerHTML = '<div class="modal-bg" style="z-index:300;"><div class="modal" style="max-width:340px;">'
     + '<h3>Ajustar foto (moldura 4:5)</h3>'
@@ -1867,20 +1815,12 @@ function openPhotoCropOverlay(imageUrl, onConfirm, opts){
     + '<button class="btn outline small" id="cropZoomOutBtn" type="button" title="Diminuir foto">➖ Diminuir</button>'
     + '<button class="btn outline small" id="cropZoomInBtn" type="button" title="Aumentar foto">➕ Aumentar</button>'
     + '</div>'
-    + (opts.rawUrl ? '<div class="note" style="text-align:center;margin-bottom:8px;">Fundo removido automaticamente. Não ficou bom? <a href="#" id="cropUseRawLink">Usar a foto original (com fundo)</a></div>' : '')
     + '<div class="row-actions"><button class="btn" id="cropConfirmBtn">Usar esta foto</button><button class="btn outline" id="cropCancelBtn">Cancelar</button></div>'
     + '</div></div>';
   const imgEl = document.getElementById('cropperImage');
   const cropper = new Cropper(imgEl, { aspectRatio: 4/5, viewMode: 0, dragMode: 'move', autoCropArea: 1, background: false, guides: false, center: false, minCanvasWidth: 40, minCanvasHeight: 50 });
   document.getElementById('cropZoomInBtn').onclick = function(){ cropper.zoom(0.1); };
   document.getElementById('cropZoomOutBtn').onclick = function(){ cropper.zoom(-0.1); };
-  if(opts.rawUrl){
-    document.getElementById('cropUseRawLink').onclick = function(e){
-      e.preventDefault();
-      cropper.destroy();
-      openPhotoCropOverlay(opts.rawUrl, onConfirm, {});
-    };
-  }
   document.getElementById('cropConfirmBtn').onclick = function(){
     cropper.getCroppedCanvas({ width:1080, height:1350, fillColor:CATALOG_PAGE_BG }).toBlob(function(blob){
       cropper.destroy();
@@ -4558,7 +4498,7 @@ function buildCatalogHTML(sbUrl, sbAnon){
 
 const CATALOG_CSS = [
 '*{box-sizing:border-box;}',
-'body{margin:0;font-family:"Poppins",sans-serif;background:#fff;color:#2b1a1f;}',
+'body{margin:0;font-family:"Poppins",sans-serif;background-color:#fdfbf8;background-image:radial-gradient(circle at 92% 0%, #f0c9d6 0%, rgba(240,201,214,0) 38%),radial-gradient(circle at 55% 100%, #e9cf9a 0%, rgba(233,207,154,0) 38%);background-attachment:fixed;color:#2b1a1f;}',
 'h1,h2,h3{font-family:"Playfair Display",serif;margin:0;}',
 '.hero{position:relative;background:linear-gradient(135deg,#6b1f33,#4a1523);color:#fff;padding:44px 24px 34px;text-align:center;overflow:hidden;}',
 '.hero-bg{position:absolute;inset:0;background-size:cover;background-position:center;}',
