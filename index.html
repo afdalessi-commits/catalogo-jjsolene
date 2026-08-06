@@ -5790,6 +5790,207 @@ async function applyCashbackRules(phone, orderTotal, saleId){
   await q(SUPA.from('customers').update({ cashback_balance: round2((Number(custRows[0].cashback_balance)||0) + amount) }).eq('id', customerId));
 }
 
+/* ============================================================
+   IMPORTAÇÃO DO PHIBO (produtos/estoque + clientes)
+   ============================================================ */
+// Parser simples pro formato do Phibo (sem aspas nos campos, separado por ";").
+// Não serve pra CSV genérico (não trata aspas/vírgula dentro de campo).
+function parsePhiboCSV(text){
+  const clean = text.replace(/^﻿/, '');
+  const lines = clean.split(/\r\n|\n|\r/).filter(l=>l.length>0);
+  return lines.map(line=>line.split(';').map(f=>f.trim()));
+}
+function looksLikeHeader(row){
+  return !!(row && /c[oó]digo/i.test(row[0]||''));
+}
+function parseBRNumber(s){
+  // Preço do Phibo vem em vírgula decimal (ex: "150,00"), não ponto-de-milhar.
+  if(!s) return 0;
+  return Number(String(s).trim().replace(/\./g,'').replace(',','.'))||0;
+}
+async function importPhiboClientes(text){
+  const rows = parsePhiboCSV(text);
+  const dataRows = looksLikeHeader(rows[0]) ? rows.slice(1) : rows;
+  const result = { created:0, updated:0, skipped:0, errors:[] };
+  for(let i=0;i<dataRows.length;i++){
+    const rowNum = i+1;
+    const r = dataRows[i];
+    try{
+      const name = (r[2]||'').trim();
+      const phone = (r[4]||'').replace(/\D/g,'');
+      const bday = Number(r[6])||null;
+      const bmonth = Number(r[7])||null;
+      const email = (r[8]||'').trim() || null;
+      const cpf = (r[12]||'').replace(/\D/g,'') || null;
+      const cep = (r[13]||'').replace(/\D/g,'') || null;
+      const street = (r[14]||'').trim();
+      const number = (r[15]||'').trim();
+      const complement = (r[16]||'').trim();
+      const neighborhood = (r[17]||'').trim();
+      const state = (r[18]||'').trim().toUpperCase();
+      const city = (r[19]||'').trim();
+      if(!name){ result.skipped++; result.errors.push({row:rowNum, reason:'Sem nome'}); continue; }
+      if(!phone && !email){ result.skipped++; result.errors.push({row:rowNum, reason:'Sem telefone nem e-mail'}); continue; }
+      const payload = { name, phone, email, birth_day:bday, birth_month:bmonth, cpf, cep, street, number, complement, neighborhood, state, city };
+      let existing = null;
+      if(phone){
+        const { data } = await SUPA.from('customers').select('id').eq('phone', phone).limit(1);
+        existing = data && data[0];
+      } else if(email){
+        const { data } = await SUPA.from('customers').select('id').eq('email', email).limit(1);
+        existing = data && data[0];
+      }
+      if(existing){
+        const { error } = await SUPA.from('customers').update(payload).eq('id', existing.id);
+        if(error) throw error;
+        result.updated++;
+      } else {
+        const { error } = await SUPA.from('customers').insert([payload]);
+        if(error) throw error;
+        result.created++;
+      }
+    }catch(e){
+      result.skipped++;
+      result.errors.push({row:rowNum, reason:e.message||String(e)});
+    }
+  }
+  return result;
+}
+async function importPhiboEstoque(text){
+  const rows = parsePhiboCSV(text);
+  const dataRows = looksLikeHeader(rows[0]) ? rows.slice(1) : rows;
+  const result = { created:0, updated:0, skipped:0, errors:[], noNcm:0 };
+
+  const groups = new Map();
+  dataRows.forEach((r,i)=>{
+    const sku = (r[0]||'').trim();
+    if(!sku){ result.skipped++; result.errors.push({row:i+1, reason:'Sem código do produto'}); return; }
+    if(!groups.has(sku)) groups.set(sku, []);
+    groups.get(sku).push({ r, rowNum:i+1 });
+  });
+
+  const { data: allCats } = await SUPA.from('categories').select('id,name');
+  const catByName = new Map((allCats||[]).map(c=>[c.name.trim().toLowerCase(), c.id]));
+  const { data: allForn } = await SUPA.from('fornecedores').select('id,cnpj');
+  const fornByCnpj = new Map((allForn||[]).filter(f=>f.cnpj).map(f=>[f.cnpj, f.id]));
+
+  for(const [sku, groupRows] of groups){
+    const first = groupRows[0].r;
+    const rowNumsForGroup = groupRows.map(g=>g.rowNum).join(',');
+    try{
+      const name = (first[1]||'').trim();
+      if(!name){ throw new Error('Sem descrição do produto'); }
+      const cnpj = (first[3]||'').replace(/\D/g,'');
+      const costPrice = round2(parseBRNumber(first[4]));
+      const salePrice = round2(parseBRNumber(first[5]));
+      const ncm = (first[6]||'').trim();
+      if(!ncm) result.noNcm++;
+      const categoryName = (first[12]||'').trim();
+      const colorHex = (first[14]||'').trim();
+      const color = (first[15]||'').trim();
+
+      let categoryId = null;
+      if(categoryName){
+        const key = categoryName.toLowerCase();
+        if(catByName.has(key)){ categoryId = catByName.get(key); }
+        else{
+          const { data, error } = await SUPA.from('categories').insert([{ name:categoryName, icon:'🏷️' }]).select();
+          if(error) throw error;
+          categoryId = data[0].id;
+          catByName.set(key, categoryId);
+        }
+      }
+
+      let fornecedorId = null;
+      if(cnpj){
+        if(fornByCnpj.has(cnpj)){ fornecedorId = fornByCnpj.get(cnpj); }
+        else{
+          const { data, error } = await SUPA.from('fornecedores').insert([{ name:'Fornecedor '+maskCNPJ(cnpj), cnpj }]).select();
+          if(error) throw error;
+          fornecedorId = data[0].id;
+          fornByCnpj.set(cnpj, fornecedorId);
+        }
+      }
+
+      const entryValue = costPrice;
+      const costIndex = 1;
+      const saleIndex = costPrice>0 ? round2(salePrice/costPrice) : 1;
+      const payload = {
+        sku, name, category_id:categoryId, fornecedor_id:fornecedorId,
+        entry_value:entryValue, cost_index:costIndex, sale_index:saleIndex,
+        cost_price:costPrice, sale_price:salePrice, ncm, color, color_hex:colorHex
+      };
+
+      const { data: existingP } = await SUPA.from('products').select('id').eq('sku', sku).limit(1);
+      let productId;
+      if(existingP && existingP[0]){
+        productId = existingP[0].id;
+        const { error } = await SUPA.from('products').update(payload).eq('id', productId);
+        if(error) throw error;
+        result.updated++;
+      } else {
+        const { data, error } = await SUPA.from('products').insert([payload]).select();
+        if(error) throw error;
+        productId = data[0].id;
+        result.created++;
+      }
+
+      const sizePayloads = [];
+      for(const { r:gr, rowNum } of groupRows){
+        try{
+          const size = (gr[8]||'').trim();
+          const stock = Number(gr[9])||0;
+          let barcode = (gr[7]||'').trim();
+          if(!size){ throw new Error('Linha sem tamanho'); }
+          if(/^gera$/i.test(barcode)) barcode = generateBarcode(sku, size);
+          sizePayloads.push({ product_id:productId, size, stock, barcode });
+        }catch(e){
+          result.errors.push({row:rowNum, reason:e.message||String(e)});
+        }
+      }
+      if(sizePayloads.length){
+        const { error } = await SUPA.from('product_sizes').upsert(sizePayloads, { onConflict:'product_id,size' });
+        if(error) throw error;
+      }
+    }catch(e){
+      result.skipped++;
+      result.errors.push({row:rowNumsForGroup, reason:e.message||String(e)});
+    }
+  }
+  return result;
+}
+function phiboResultHtml(result){
+  let html = '<strong>'+result.created+' criado(s), '+result.updated+' atualizado(s), '+result.skipped+' pulado(s)'+(result.noNcm?', '+result.noNcm+' sem NCM':'')+'.</strong>';
+  if(result.errors.length){
+    html += '<div style="max-height:200px;overflow-y:auto;margin-top:6px;"><ul style="margin:4px 0 0;padding-left:18px;">';
+    result.errors.slice(0,30).forEach(function(e){
+      html += '<li>Linha '+e.row+': '+escapeHtml(e.reason)+'</li>';
+    });
+    if(result.errors.length>30){ html += '<li>+'+(result.errors.length-30)+' outra(s)...</li>'; }
+    html += '</ul></div>';
+  }
+  return html;
+}
+async function runPhiboImport(kind){
+  const inputId = kind==='estoque' ? 'phibo_estoque_file' : 'phibo_clientes_file';
+  const input = document.getElementById(inputId);
+  const file = input.files[0];
+  if(!file){ toast('Escolha um arquivo CSV primeiro.'); return; }
+  const box = document.getElementById('phibo_import_result');
+  box.classList.remove('hidden');
+  box.innerHTML = 'Importando...';
+  try{
+    const text = await file.text();
+    const result = kind==='estoque' ? await importPhiboEstoque(text) : await importPhiboClientes(text);
+    box.innerHTML = phiboResultHtml(result);
+    input.value = '';
+    if(kind==='estoque'){ productsLiteCache = null; estoqueProductsCache = []; categoriesCache = null; }
+  }catch(e){
+    box.innerHTML = 'Erro ao importar: '+escapeHtml(e.message||String(e));
+    console.error(e);
+  }
+}
+
 async function renderConfig(){
   const el = document.getElementById('tab-config');
   el.innerHTML = '<div class="empty">Carregando...</div>';
@@ -5922,6 +6123,20 @@ async function renderConfig(){
     html += '<tr><td>'+c.icon+'</td><td>'+escapeHtml(c.name)+'</td><td><button class="btn small danger" onclick="deleteCategory(\''+c.id+'\')">Excluir</button></td></tr>';
   });
   html += '</table></div>';
+
+  html += '<div class="section-title">Importar do Phibo</div>';
+  html += '<div class="card">';
+  html += '<div class="note">Importa clientes e produtos exportados do sistema Phibo (CSV). Rodar de novo com um arquivo atualizado atualiza os registros existentes (não duplica) — a identificação usa SKU pra produtos e telefone/e-mail pra clientes.</div>';
+  html += '<div class="form-row" style="align-items:end;">';
+  html += '<div class="field"><label>CSV de Estoque (produtos)</label><input type="file" id="phibo_estoque_file" accept=".csv,text/csv"></div>';
+  html += '<button class="btn small outline" onclick="runPhiboImport(\'estoque\')">Importar Estoque</button>';
+  html += '</div>';
+  html += '<div class="form-row" style="align-items:end;margin-top:10px;">';
+  html += '<div class="field"><label>CSV de Clientes</label><input type="file" id="phibo_clientes_file" accept=".csv,text/csv"></div>';
+  html += '<button class="btn small outline" onclick="runPhiboImport(\'clientes\')">Importar Clientes</button>';
+  html += '</div>';
+  html += '<div id="phibo_import_result" class="note hidden" style="margin-top:12px;"></div>';
+  html += '</div>';
 
   html += '<div class="section-title">👥 Equipe (níveis de acesso)</div>';
   html += '<div class="page-desc">Cada pessoa precisa primeiro ter um login criado no Supabase (Authentication → Add user, com e-mail e senha). Depois é só colar o e-mail dela aqui e escolher o nível de acesso.</div>';
