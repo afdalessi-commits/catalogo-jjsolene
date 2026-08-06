@@ -64,10 +64,10 @@ async function handleWhatsAppEvent(supabase: any, payload: any) {
 
       // Recibos de status (entregue/lido/falhou) das mensagens que NÓS enviamos
       for (const status of value.statuses || []) {
-        await supabase.from("messages").update({ status: mapWhatsAppStatus(status.status) }).eq(
-          "meta_message_id",
-          status.id,
-        );
+        await supabase.from("messages").update({
+          status: mapWhatsAppStatus(status.status),
+          error_detail: status.errors ? JSON.stringify(status.errors) : null,
+        }).eq("meta_message_id", status.id);
       }
 
       const contacts = value.contacts || [];
