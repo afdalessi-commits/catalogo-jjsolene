@@ -14,16 +14,19 @@ in this repo.
 
 Both the admin app and the public catalog are hosted via **GitHub Pages** on this repo (owner:
 `sistemidalessi` org — moved here from the personal account `afdalessi-commits` on 2026-08-07;
-GitHub Pages URLs are owner-specific and do **not** redirect across a repo transfer, so the old
-`afdalessi-commits.github.io` links now 404 — not an issue yet since nothing had been shared
+repo also renamed from `catalogo-jjsolene` to `jjsolene-sistema-gestao` the same day, to reflect
+that this is the full management system, not just the catalog — the public catalog is one part of
+it, generated from and served alongside the admin app. GitHub Pages URLs are owner/repo-specific
+and do **not** redirect across a transfer or rename, so both the old `afdalessi-commits.github.io`
+and the old `.../catalogo-jjsolene/` links now 404 — not an issue yet since nothing had been shared
 publicly, but if a custom domain gets added later, this note can go away):
 
-- **Admin system**: `https://sistemidalessi.github.io/catalogo-jjsolene/` — serves `index.html`
-  at the repo root directly.
-- **Public catalog**: `https://sistemidalessi.github.io/catalogo-jjsolene/catalogo/` — serves
-  **`catalogo/index.html`**, a *generated* file (see "Public catalog generator" below). Unlike a
-  typical build artifact, this one **is committed to the repo** so GitHub Pages can serve it at a
-  stable URL — regenerate and re-commit it whenever `CATALOG_CSS` / `CATALOG_JS` changes.
+- **Sistema (admin)**: `https://sistemidalessi.github.io/jjsolene-sistema-gestao/` — serves
+  `index.html` at the repo root directly.
+- **Catálogo (público)**: `https://sistemidalessi.github.io/jjsolene-sistema-gestao/catalogo/` —
+  serves **`catalogo/index.html`**, a *generated* file (see "Public catalog generator" below).
+  Unlike a typical build artifact, this one **is committed to the repo** so GitHub Pages can serve
+  it at a stable URL — regenerate and re-commit it whenever `CATALOG_CSS` / `CATALOG_JS` changes.
 - Pushing to `main` auto-deploys both (GitHub Pages rebuild, usually live within ~1 minute).
 - There used to be a separate local copy the owner opened directly (`sistema-jjsolene.html`,
   outside this repo) — that's deprecated in favor of the hosted links above. If asked to fix
