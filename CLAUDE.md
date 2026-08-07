@@ -13,11 +13,14 @@ in this repo.
 ## Hosting — this is live, not just local
 
 Both the admin app and the public catalog are hosted via **GitHub Pages** on this repo (owner:
-`afdalessi-commits`), so the owner can work from any computer without syncing local files:
+`sistemidalessi` org — moved here from the personal account `afdalessi-commits` on 2026-08-07;
+GitHub Pages URLs are owner-specific and do **not** redirect across a repo transfer, so the old
+`afdalessi-commits.github.io` links now 404 — not an issue yet since nothing had been shared
+publicly, but if a custom domain gets added later, this note can go away):
 
-- **Admin system**: `https://afdalessi-commits.github.io/catalogo-jjsolene/` — serves `index.html`
+- **Admin system**: `https://sistemidalessi.github.io/catalogo-jjsolene/` — serves `index.html`
   at the repo root directly.
-- **Public catalog**: `https://afdalessi-commits.github.io/catalogo-jjsolene/catalogo/` — serves
+- **Public catalog**: `https://sistemidalessi.github.io/catalogo-jjsolene/catalogo/` — serves
   **`catalogo/index.html`**, a *generated* file (see "Public catalog generator" below). Unlike a
   typical build artifact, this one **is committed to the repo** so GitHub Pages can serve it at a
   stable URL — regenerate and re-commit it whenever `CATALOG_CSS` / `CATALOG_JS` changes.
