@@ -3903,6 +3903,14 @@ async function renderFinanceiro(){
   html += '</div>';
   html += '<div id="dre_results" style="margin-top:14px;"></div>';
 
+  html += '<div class="section-title">🏦 Conciliação bancária</div>';
+  html += '<div class="page-desc">Importe o extrato do banco (arquivo .OFX) para comparar automaticamente com os lançamentos daqui.</div>';
+  html += '<div class="row-actions" style="margin-bottom:14px;">';
+  html += '<input type="file" id="bank_ofx_input" accept=".ofx" style="display:none;" onchange="importBankStatement(this)">';
+  html += '<button class="btn" onclick="document.getElementById(\'bank_ofx_input\').click()">📄 Importar extrato (.OFX)</button>';
+  html += '</div>';
+  html += '<div id="conciliacao_results"></div>';
+
   html += '<div class="section-title">Lançamentos ('+finance.length+')</div>';
   if(finance.length===0){
     html += '<div class="empty">Nenhum lançamento ainda.</div>';
@@ -3923,6 +3931,106 @@ async function renderFinanceiro(){
     html += '</table></div>';
   }
   el.innerHTML = html;
+  renderConciliacaoResults();
+}
+function parseOFX(text){
+  const blocks = text.match(/<STMTTRN>[\s\S]*?<\/STMTTRN>/gi) || [];
+  return blocks.map(function(block){
+    const trnamt = (block.match(/<TRNAMT>([^<\r\n]+)/i)||[])[1];
+    const dtposted = (block.match(/<DTPOSTED>([^<\r\n]+)/i)||[])[1];
+    const fitid = (block.match(/<FITID>([^<\r\n]+)/i)||[])[1];
+    const memo = (block.match(/<MEMO>([^<\r\n]+)/i)||[])[1] || (block.match(/<NAME>([^<\r\n]+)/i)||[])[1] || '';
+    const amount = Number((trnamt||'0').trim().replace(',','.'));
+    const dateDigits = (dtposted||'').trim().slice(0,8);
+    const isoDate = dateDigits.length===8 ? dateDigits.slice(0,4)+'-'+dateDigits.slice(4,6)+'-'+dateDigits.slice(6,8) : null;
+    return { fitid: (fitid||'').trim(), date: isoDate, amount: amount, memo: memo.trim() };
+  }).filter(function(t){ return t.date && !isNaN(t.amount) && t.fitid; });
+}
+async function importBankStatement(input){
+  const file = input.files[0];
+  if(!file) return;
+  const text = await file.text();
+  const transactions = parseOFX(text);
+  input.value = '';
+  if(transactions.length===0){ toast('Não consegui ler nenhuma transação nesse arquivo. Confira se é um .OFX válido, exportado do banco.'); return; }
+  const rows = transactions.map(function(t){ return { fitid: t.fitid, date: t.date, amount: t.amount, memo: t.memo }; });
+  await q(SUPA.from('bank_import_transactions').upsert(rows, { onConflict: 'fitid', ignoreDuplicates: true }));
+  await matchBankTransactions();
+  await renderConciliacaoResults();
+  toast('Extrato importado: '+transactions.length+' transações processadas.');
+}
+async function matchBankTransactions(){
+  const unmatchedTx = await q(SUPA.from('bank_import_transactions').select('*').eq('status','unmatched'));
+  if(unmatchedTx.length===0) return;
+  const openFinance = await q(SUPA.from('finance').select('*'));
+  const matchedRows = await q(SUPA.from('bank_import_transactions').select('matched_finance_id').not('matched_finance_id','is',null));
+  const matchedFinanceIds = new Set(matchedRows.map(function(r){ return r.matched_finance_id; }));
+  for(const tx of unmatchedTx){
+    const wantType = Number(tx.amount) >= 0 ? 'receita' : 'despesa';
+    const wantAmount = Math.abs(Number(tx.amount));
+    const candidates = openFinance.filter(function(f){
+      return f.type===wantType && !matchedFinanceIds.has(f.id) && Math.abs(Number(f.amount) - wantAmount) < 0.01;
+    });
+    let match = candidates.find(function(f){ return f.date===tx.date; });
+    if(!match){
+      match = candidates.find(function(f){
+        const diff = Math.abs((new Date(f.date) - new Date(tx.date)) / 86400000);
+        return diff <= 3;
+      });
+    }
+    if(match){
+      await q(SUPA.from('bank_import_transactions').update({ status:'matched', matched_finance_id: match.id }).eq('id', tx.id));
+      matchedFinanceIds.add(match.id);
+    }
+  }
+}
+async function renderConciliacaoResults(){
+  const el = document.getElementById('conciliacao_results');
+  if(!el) return;
+  const txRows = await q(SUPA.from('bank_import_transactions').select('*').order('date',{ascending:false}));
+  if(txRows.length===0){ el.innerHTML = ''; return; }
+  const unmatched = txRows.filter(function(t){ return t.status==='unmatched'; });
+  const matched = txRows.filter(function(t){ return t.status==='matched'; });
+  const dates = txRows.map(function(t){ return t.date; }).sort();
+  const minDate = dates[0], maxDate = dates[dates.length-1];
+  const matchedFinanceIds = new Set(matched.map(function(t){ return t.matched_finance_id; }));
+  const financeAll = await q(SUPA.from('finance').select('*').eq('status','pago').gte('date', minDate).lte('date', maxDate));
+  const missingFromStatement = financeAll.filter(function(f){ return !matchedFinanceIds.has(f.id); });
+
+  let html = '<div class="card" style="margin-bottom:16px;">';
+  html += '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px;">';
+  html += '<div><strong style="color:var(--success);">'+matched.length+'</strong> transações batidas certinho</div>';
+  html += '<div><strong style="color:var(--danger);">'+unmatched.length+'</strong> transações do extrato sem lançamento no sistema</div>';
+  html += '<div><strong style="color:var(--warn);">'+missingFromStatement.length+'</strong> lançamentos pagos sem transação encontrada no extrato</div>';
+  html += '</div>';
+
+  if(unmatched.length>0){
+    html += '<div style="font-weight:700;color:var(--wine-dark);margin-top:10px;">⚠️ No extrato, mas sem lançamento no sistema:</div>';
+    html += '<table><tr><th>Data</th><th>Descrição (banco)</th><th>Valor</th><th></th></tr>';
+    unmatched.forEach(function(t){
+      html += '<tr><td>'+fmtDate(t.date)+'</td><td>'+escapeHtml(t.memo||'—')+'</td><td>'+fmtMoney(t.amount)+'</td>';
+      html += '<td><button class="btn small outline" onclick="openFinanceFormFromBank(\''+t.id+'\',\''+t.date+'\','+t.amount+',\''+escapeHtml(t.memo||'').replace(/'/g,"\\'")+'\')">+ Lançar</button></td></tr>';
+    });
+    html += '</table>';
+  }
+  if(missingFromStatement.length>0){
+    html += '<div style="font-weight:700;color:var(--wine-dark);margin-top:14px;">⚠️ Lançados como pago, mas não achamos no extrato:</div>';
+    html += '<table><tr><th>Data</th><th>Descrição</th><th>Valor</th></tr>';
+    missingFromStatement.forEach(function(f){
+      html += '<tr><td>'+fmtDate(f.date)+'</td><td>'+escapeHtml(f.description)+'</td><td>'+fmtMoney(f.amount)+'</td></tr>';
+    });
+    html += '</table>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
+}
+function openFinanceFormFromBank(txId, date, amount, memo){
+  openFinanceForm();
+  document.getElementById('fi_date').value = date;
+  document.getElementById('fi_amount').value = Math.abs(amount);
+  document.getElementById('fi_type').value = amount>=0 ? 'receita' : 'despesa';
+  document.getElementById('fi_desc').value = memo;
+  document.getElementById('fi_status').value = 'pago';
 }
 function openFinanceForm(){
   let html = '<h3>Novo lançamento</h3>';
@@ -3966,12 +4074,14 @@ async function saveFinance(){
     await createBillReminderTask(inserted[0].id, description, dueDate, amount);
   }
   closeModal();
+  await matchBankTransactions();
   await renderFinanceiro();
   toast('Lançamento salvo.'+(type==='despesa' && status==='pendente' && dueDate ? ' Um lembrete apareceu na Agenda compartilhada.' : ''));
 }
 async function markFinancePaid(id){
   await q(SUPA.from('finance').update({ status:'pago' }).eq('id', id));
   await q(SUPA.from('tasks').update({ done:true }).eq('finance_id', id));
+  await matchBankTransactions();
   await renderFinanceiro();
 }
 async function deleteFinance(id){
