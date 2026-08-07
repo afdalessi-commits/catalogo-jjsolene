@@ -352,7 +352,16 @@ function applyMask(inputEl, maskFn){
 }
 function uidLocal(prefix){ return (prefix||'id')+'_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 function todayISO(){ const d = new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
-function fmtDate(iso){ if(!iso) return '—'; const d = new Date(iso); if(isNaN(d)) return iso; return d.toLocaleDateString('pt-BR'); }
+function fmtDate(iso){
+  if(!iso) return '—';
+  if(/^\d{4}-\d{2}-\d{2}$/.test(iso)){
+    const parts = iso.split('-');
+    return parts[2]+'/'+parts[1]+'/'+parts[0];
+  }
+  const d = new Date(iso);
+  if(isNaN(d)) return iso;
+  return d.toLocaleDateString('pt-BR');
+}
 function fmtMoney(n){ n = Number(n)||0; return 'R$ ' + n.toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2}); }
 function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 function toast(msg){
