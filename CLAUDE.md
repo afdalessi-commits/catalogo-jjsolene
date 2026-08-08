@@ -6,9 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A single-file admin/back-office web app for "JJ Solene" (a clothing/fashion business): inventory,
 purchases, sales, sellers/commissions, customers, marketing, finance, invoices, a personal task
-calendar, and catalog publishing. The entire application — HTML, CSS, and JS — lives in
-**`index.html`** (~3300 lines). There is no build system, package manager, bundler, or test suite
-in this repo.
+calendar, catalog publishing, and omnichannel customer service (Atendimento). The entire
+application — HTML, CSS, and JS — lives in **`index.html`** (~3300 lines). There is no build
+system, package manager, or bundler for the app itself, and no test suite in this repo; the one
+piece with its own deploy step is the small set of Supabase Edge Functions described under
+Architecture below.
 
 ## Hosting — this is live, not just local
 
@@ -51,10 +53,18 @@ publicly, but if a custom domain gets added later, this note can go away):
 ## Architecture
 
 **Backend:** [Supabase](https://supabase.com) (Postgres + Auth + Storage), loaded from the
-`@supabase/supabase-js@2` CDN script. There is no server-side code in this repo — all data access
-happens client-side through the Supabase JS client (`SUPA` in the admin app, `sb` inside the
-generated catalog), with every admin-side call wrapped in the `q()` helper (`index.html:~225`),
-which unwraps `{ data, error }`, toasts on error, and rethrows.
+`@supabase/supabase-js@2` CDN script. Almost all data access happens client-side through the
+Supabase JS client (`SUPA` in the admin app, `sb` inside the generated catalog), with every
+admin-side call wrapped in the `q()` helper (`index.html:~225`), which unwraps `{ data, error }`,
+toasts on error, and rethrows. The one exception is the Atendimento module: two Supabase Edge
+Functions under `supabase/functions/` (Deno, project ref `pcvcpylcpuvprpkydbxf`) —
+`meta-webhook` (public, no Supabase JWT; verifies Meta's HMAC signature on the request body
+instead) receives inbound WhatsApp/Instagram/Messenger events from Meta, and `meta-send`
+(requires the caller's Supabase session JWT, re-validates conversation visibility itself since it
+runs under service role and bypasses RLS) sends outbound messages/templates. Shared helpers live
+in `supabase/functions/_shared/meta.ts`. Deploy steps and required secrets are in
+`docs/atendimento-deploy.md` / `docs/atendimento-setup-meta.md`; schema in
+`docs/atendimento-schema.sql`.
 
 - Default project credentials are hardcoded (`DEFAULT_SB_URL` / `DEFAULT_SB_ANON`) so the app works
   out of the box. The anon key is safe to expose — access is gated by Postgres Row Level Security
