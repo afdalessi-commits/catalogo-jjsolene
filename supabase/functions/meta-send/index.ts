@@ -119,10 +119,13 @@ async function sendViaTemplate(supabase: any, payload: any): Promise<string | nu
   const conv = await findOrCreateWhatsAppConversation(supabase, phone, payload.params?.customer_name);
 
   const filledBody = fillTemplate(tpl.body, payload.params || {});
-  // A ordem dos parâmetros abaixo precisa bater com a ordem das variáveis {{1}}, {{2}}...
-  // no template aprovado na Meta — hoje fixo em [customer_name, total] pro template
-  // "pedido_confirmado_v1"; ajustar aqui se o template for alterado.
-  const orderedParams = [payload.params?.customer_name || "", payload.params?.total || ""];
+  // Os nomes abaixo (parameter_name) precisam bater com as variáveis nomeadas
+  // {{customer_name}}, {{order_number}} do template aprovado na Meta — hoje fixo pro
+  // template "pedido_confirmado_v1"; ajustar aqui se o template for alterado.
+  const orderedParams = [
+    { name: "customer_name", value: payload.params?.customer_name || "" },
+    { name: "order_number", value: payload.params?.order_number || "" },
+  ];
   const messageId = await sendWhatsAppTemplate(
     WHATSAPP_PHONE_NUMBER_ID,
     WHATSAPP_TOKEN,

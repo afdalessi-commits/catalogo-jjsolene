@@ -60,7 +60,7 @@ export async function sendWhatsAppTemplate(
   token: string,
   to: string,
   templateName: string,
-  bodyParams: string[],
+  bodyParams: { name: string; value: string }[],
 ): Promise<string | null> {
   const res = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`, {
     method: "POST",
@@ -72,7 +72,10 @@ export async function sendWhatsAppTemplate(
       template: {
         name: templateName,
         language: { code: "pt_BR" },
-        components: [{ type: "body", parameters: bodyParams.map((p) => ({ type: "text", text: p })) }],
+        components: [{
+          type: "body",
+          parameters: bodyParams.map((p) => ({ type: "text", parameter_name: p.name, text: p.value })),
+        }],
       },
     }),
   });
